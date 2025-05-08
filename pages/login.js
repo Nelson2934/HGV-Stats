@@ -1,12 +1,4 @@
-export default function Home() {
-    return (
-      <div style={{ textAlign: 'center', paddingTop: '50px' }}>
-        <h1>Welcome to HGV Stats</h1>
-        <a href="/login">Go to Login</a>
-      </div>
-    );
-  }
-  
+
 import { useState } from 'react';
 
 export default function LoginPage() {
