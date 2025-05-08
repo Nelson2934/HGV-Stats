@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HGV Status Dashboard</title>
+<style>
+body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;padding:20px;background-color:#f8f9fa;margin:0;display:flex;flex-direction:column;justify-content:center;height:100vh;overflow:hidden}
+h1{text-align:center;margin-bottom:30px;color:#1e3a8a;font-size:28px}
+.dashboard-header{display:flex;justify-content:space-between;align-items:center;padding:0 20px;margin-bottom:20px}
+.stats{display:flex;gap:20px;font-weight:bold}
+.stat-item{display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:5px}
+.stat-vor{background-color:#ffebee;color:#d32f2f}
+.stat-route{background-color:#e8f5e9;color:#2e7d32}
+.stat-yard{background-color:#e3f2fd;color:#1976d2}
+.stat-defect{background:linear-gradient(to right,#e8f5e9 50%,#ffebee 50%);color:#333}
+.stat-count{font-size:18px}
+.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:15px;grid-template-rows:repeat(6,1fr);justify-content:center;align-items:center;height:80%;overflow:auto;padding:10px}
+.hgv{text-align:center;display:flex;flex-direction:column;align-items:center;transition:transform .2s ease-in-out}
+.hgv:hover{transform:scale(1.05)}
+.hgv-container{position:relative;display:flex;align-items:flex-end;justify-content:center;margin:0 auto;width:100%;max-width:120px;cursor:pointer;transform-origin:bottom center}
+.cab{width:30px;height:50px;background-color:#444;border-top-left-radius:5px;border-bottom-left-radius:5px;position:relative;box-shadow:0 2px 4px rgba(0,0,0,.2)}
+.trailer{width:80px;height:50px;background-color:#2196F3;border-top-right-radius:5px;border-bottom-right-radius:5px;position:relative;display:flex;align-items:center;justify-content:center;transition:transform .2s ease-in-out;box-shadow:0 2px 4px rgba(0,0,0,.2)}
+.vor .trailer{background-color:#d32f2f}
+.yard .trailer{background-color:#1976d2}
+.route .trailer{background-color:#2e7d32}
+.running-defect .trailer{background:linear-gradient(to right,#2e7d32 50%,#d32f2f 50%)}
+.hgv-number{color:white;font-weight:bold;font-size:12px;text-shadow:1px 1px 1px rgba(0,0,0,.5)}
+.wheel{width:12px;height:12px;background-color:#333;border-radius:50%;position:absolute;bottom:-8px;box-shadow:0 2px 3px rgba(0,0,0,.3)}
+.cab .wheel.left{left:5px}
+.trailer .wheel.left{left:10px}
+.trailer .wheel.right{right:10px}
+select{margin-top:10px;width:80%;padding:6px;border-radius:5px;text-align:center;text-align-last:center;border:1px solid #ccc;appearance:none;-webkit-appearance:none;background-color:white;background-image:url("data:image/svg+xml;utf8,<svg fill='%23333' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");background-repeat:no-repeat;background-position:right 5px center;cursor:pointer;font-family:inherit;transition:all .2s ease}
+select:focus{outline:none;border-color:#2196F3;box-shadow:0 0 0 2px rgba(33,150,243,.2)}
+.vor-select{border-color:#d32f2f}
+.route-select{border-color:#2e7d32}
+.yard-select{border-color:#1976d2}
+.running-defect-select{border:1px solid;border-image:linear-gradient(to right,#2e7d32 50%,#d32f2f 50%);border-image-slice:1}
+@keyframes driving{0%{transform:translateX(0) translateY(0)}10%{transform:translateX(-1px) translateY(1px)}20%{transform:translateX(0) translateY(.5px)}30%{transform:translateX(1px) translateY(0)}40%{transform:translateX(0) translateY(-.5px)}50%{transform:translateX(-.5px) translateY(-1px)}60%{transform:translateX(0) translateY(-.5px)}70%{transform:translateX(.5px) translateY(0)}80%{transform:translateX(0) translateY(.5px)}90%{transform:translateX(-.5px) translateY(1px)}100%{transform:translateX(0) translateY(0)}}
+@keyframes wheel-rotation{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.route .hgv-container,.running-defect .hgv-container{animation:driving 3s infinite ease-in-out}
+.route .wheel,.running-defect .wheel{animation:wheel-rotation 2s infinite linear}
+@keyframes breakdown{0%{transform:translateY(0)}25%{transform:translateY(-1px)}50%{transform:translateY(1px)}75%{transform:translateY(-.5px)}100%{transform:translateY(0)}}
+.vor .hgv-container{animation:breakdown .8s infinite}
+@keyframes combined{0%{transform:translateX(0) translateY(0)}10%{transform:translateX(-1px) translateY(1px)}20%{transform:translateX(0) translateY(.5px)}30%{transform:translateX(1px) translateY(0)}40%{transform:translateX(0) translateY(-.5px)}50%{transform:translateX(-.5px) translateY(-1px)}60%{transform:translateX(0) translateY(-.5px)}70%{transform:translateX(.5px) translateY(0)}75%{transform:translateY(1px)}80%{transform:translateX(0) translateY(.5px)}85%{transform:translateY(-.5px)}90%{transform:translateX(-.5px) translateY(1px)}95%{transform:translateY(-.5px)}100%{transform:translateX(0) translateY(0)}}
+.running-defect .hgv-container{animation:combined 4s infinite ease-in-out}
+.vor-sign{position:absolute;left:-20px;top:10px;width:14px;height:14px;background-color:#d32f2f;border-radius:2px;box-shadow:0 0 5px #d32f2f;z-index:10}
+@keyframes pulse{0%{transform:scale(1);opacity:1;box-shadow:0 0 5px #d32f2f}50%{transform:scale(1.5);opacity:.8;box-shadow:0 0 10px #ff0000}100%{transform:scale(1);opacity:1;box-shadow:0 0 5px #d32f2f}}
+.vor .vor-sign,.running-defect .vor-sign{animation:pulse 1s infinite}
+.smoke{position:absolute;width:8px;height:8px;background-color:rgba(150,150,150,.8);border-radius:50%;opacity:0}
+@keyframes smoke-rise{0%{transform:translate(0,0);opacity:.8;width:5px;height:5px}100%{transform:translate(-10px,-25px);opacity:0;width:15px;height:15px}}
+.smoke-1{top:5px;left:15px;animation:smoke-rise 3s infinite;animation-delay:0s}
+.smoke-2{top:8px;left:10px;animation:smoke-rise 3s infinite;animation-delay:1s}
+.smoke-3{top:12px;left:20px;animation:smoke-rise 3s infinite;animation-delay:2s}
+.road{position:absolute;bottom:-12px;width:110%;height:6px;background-color:#555;border-radius:2px;z-index:-1}
+@keyframes road-move{0%{transform:translateX(10px)}100%{transform:translateX(-10px)}}
+.road:after{content:'';position:absolute;top:50%;left:0;right:0;height:2px;background:repeating-linear-gradient(to right,#fff,#fff 10px,transparent 10px,transparent 20px);animation:road-move 1s infinite linear}
+.tooltip{visibility:hidden;position:absolute;top:-40px;left:50%;transform:translateX(-50%);background-color:rgba(0,0,0,.8);color:white;padding:5px 10px;border-radius:4px;font-size:12px;white-space:nowrap;z-index:100;transition:visibility 0s,opacity .3s;opacity:0}
+.hgv-container:hover .tooltip{visibility:visible;opacity:1}
+.last-updated{text-align:center;font-size:12px;color:#666;margin-top:20px}
+.search-filter{display:flex;justify-content:space-between;gap:10px;margin-bottom:15px;padding:0 20px}
+.search-controls{display:flex;gap:10px}
+.search-filter input{padding:6px 10px;border-radius:5px;border:1px solid #ccc;font-family:inherit}
+.search-filter input:focus{outline:none;border-color:#2196F3}
+.filter-btn{padding:6px 12px;border:none;border-radius:5px;background-color:#f0f0f0;cursor:pointer;transition:background-color .2s}
+.filter-btn:hover{background-color:#e0e0e0}
+.filter-btn.active{background-color:#2196F3;color:white}
+.clear-btn{padding:6px 12px;border:none;border-radius:5px;background-color:#ff5722;color:white;cursor:pointer;transition:all .2s;font-weight:bold}
+.clear-btn:hover{background-color:#e64a19;transform:scale(1.05)}
+.clear-btn:active{transform:scale(.98)}
+</style>
+</head>
+<body>
+<h1>HGV Status Dashboard</h1>
+<div class="dashboard-header">
+<div class="stats">
+<div class="stat-item stat-vor"><span>VOR:</span><span id="vorCount" class="stat-count">0</span></div>
+<div class="stat-item stat-route"><span>On Route:</span><span id="routeCount" class="stat-count">0</span></div>
+<div class="stat-item stat-yard"><span>Yard:</span><span id="yardCount" class="stat-count">0</span></div>
+<div class="stat-item stat-defect"><span>Running Defect:</span><span id="defectCount" class="stat-count">0</span></div>
+</div>
+</div>
+<div class="search-filter">
+<div class="search-controls">
+<input type="text" id="searchInput" placeholder="Search HGV...">
+<button class="clear-btn" id="clearBtn">Clear All Status</button>
+</div>
+<div class="filter-controls">
+<button class="filter-btn active" data-filter="all">All</button>
+<button class="filter-btn" data-filter="VOR">VOR</button>
+<button class="filter-btn" data-filter="On Route">On Route</button>
+<button class="filter-btn" data-filter="Yard">Yard</button>
+<button class="filter-btn" data-filter="Running Defect">Running Defect</button>
+</div>
+</div>
+<div class="grid" id="hgvGrid"></div>
+<div class="last-updated">Last updated: <span id="lastUpdated"></span></div>
+
+<script>
+const grid=document.getElementById('hgvGrid'),searchInput=document.getElementById('searchInput'),filterBtns=document.querySelectorAll('.filter-btn'),clearBtn=document.getElementById('clearBtn'),vorCountEl=document.getElementById('vorCount'),routeCountEl=document.getElementById('routeCount'),yardCountEl=document.getElementById('yardCount'),defectCountEl=document.getElementById('defectCount'),lastUpdatedEl=document.getElementById('lastUpdated'),hgvElements=[],selectElements=[];let statusCounts={'VOR':0,'On Route':0,'Yard':0,'Running Defect':0};function updateStatusCounts(){vorCountEl.textContent=statusCounts['VOR'];routeCountEl.textContent=statusCounts['On Route'];yardCountEl.textContent=statusCounts['Yard'];defectCountEl.textContent=statusCounts['Running Defect']}function updateLastUpdated(){lastUpdatedEl.textContent=new Date().toLocaleString()}function filterHGVs(e,t){hgvElements.forEach(s=>{const n=s.querySelector('.hgv-number').textContent,r=s.querySelector('select').value,c=""===e||n.toLowerCase().includes(e.toLowerCase()),o="all"===t||r===t;s.style.display=c&&o?'flex':'none'})}function updateHGVStatus(e,t,s,n){e.classList.remove('moving','vor','route','yard','running-defect');t.classList.remove('vor-select','route-select','yard-select','running-defect-select');const r=e.querySelector('.vor-sign');r&&e.removeChild(r);const c=e.querySelectorAll('.smoke');c.forEach(t=>e.removeChild(t));const o=e.querySelector('.road');o&&e.removeChild(o);const a=e.querySelector('.tooltip');if(a.textContent=`HGV ${s} - ${n}`,'On Route'===n){e.classList.add('route','moving');t.classList.add('route-select');const s=document.createElement('div');s.className='road';e.appendChild(s)}else if('VOR'===n){e.classList.add('vor');t.classList.add('vor-select');const s=document.createElement('div');s.className='vor-sign';e.appendChild(s);for(let t=1;t<=3;t++){const s=document.createElement('div');s.className=`smoke smoke-${t}`;e.appendChild(s)}}else if('Running Defect'===n){e.classList.add('running-defect');t.classList.add('running-defect-select');const s=document.createElement('div');s.className='vor-sign';e.appendChild(s);for(let t=2;t<=3;t++){const s=document.createElement('div');s.className=`smoke smoke-${t}`;e.appendChild(s)}const n=document.createElement('div');n.className='road';e.appendChild(n)}else{e.classList.add('yard');t.classList.add('yard-select')}}updateLastUpdated();for(let e=1;e<=57;e++){const t=document.createElement('div');t.className='hgv';hgvElements.push(t);const s=document.createElement('div');s.className='hgv-container';const n=document.createElement('div');n.className='tooltip';n.textContent=`HGV ${e} - Ready`;s.appendChild(n);const r=document.createElement('div');r.className='cab';const c=document.createElement('div');c.className='wheel left';r.appendChild(c);const o=document.createElement('div');o.className='trailer';const a=document.createElement('div');a.className='wheel left';const l=document.createElement('div');l.className='wheel right';o.appendChild(a);o.appendChild(l);const d=document.createElement('div');d.className='hgv-number';d.textContent=`HGV ${e}`;o.appendChild(d);s.appendChild(r);s.appendChild(o);const i=document.createElement('select');selectElements.push(i);const u=['VOR','On Route','Yard','Running Defect'],h=u[Math.floor(Math.random()*u.length)];u.forEach(e=>{const t=document.createElement('option');t.value=e;t.textContent=e;e===h&&(t.selected=!0);i.appendChild(t)});statusCounts[h]++;updateHGVStatus(s,i,e,h);i.addEventListener('change',()=>{statusCounts[i.value]++;const e=i.getAttribute('data-previous-value')||h;statusCounts[e]--;updateStatusCounts();i.setAttribute('data-previous-value',i.value);updateLastUpdated();updateHGVStatus(s,i,e,i.value);const t=document.querySelector('.filter-btn.active').dataset.filter;filterHGVs(searchInput.value,'all'===t?'all':i.value)});i.setAttribute('data-previous-value',h);t.appendChild(s);t.appendChild(i);grid.appendChild(t)}updateStatusCounts();searchInput.addEventListener('input',()=>{const e=document.querySelector('.filter-btn.active').dataset.filter;filterHGVs(searchInput.value,'all'===e?'all':e)});filterBtns.forEach(e=>{e.addEventListener('click',()=>{filterBtns.forEach(e=>e.classList.remove('active'));e.classList.add('active');const t=e.dataset.filter;filterHGVs(searchInput.value,t)})});clearBtn.addEventListener('click',()=>{selectElements.forEach((e,t)=>{const s=e.value;e.value='Yard';statusCounts[s]--;statusCounts['Yard']++;e.setAttribute('data-previous-value','Yard');const n=hgvElements[t].querySelector('.hgv-container');updateHGVStatus(n,e,t+1,'Yard')});updateStatusCounts();updateLastUpdated();const e=document.querySelector('.filter-btn.active').dataset.filter;filterHGVs(searchInput.value,'all'===e?'all':e);alert('All HGVs have been set to "Yard" status')});
+</script>
+</body>
+</html>
