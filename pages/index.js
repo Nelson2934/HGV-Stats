@@ -32,6 +32,7 @@ export default function Home() {
   const [totalHGVs, setTotalHGVs] = useState(57);
   const [hgvData, setHgvData] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(null);
+  const [showDrivers, setShowDrivers] = useState(true); // New state for showing driver names
 
   // Refs for timers
   const updateTimerRef = useRef(null);
@@ -118,7 +119,8 @@ export default function Home() {
   // Filter HGVs based on search input and filter button
   const filterHGVs = (hgv) => {
     const matchesSearch = searchText === '' || 
-      hgv.id.toString().toLowerCase().includes(searchText.toLowerCase());
+      hgv.id.toString().toLowerCase().includes(searchText.toLowerCase()) ||
+      (hgv.driver && hgv.driver !== 'N/A' && hgv.driver.toLowerCase().includes(searchText.toLowerCase()));
     const matchesFilter = activeFilter === 'all' || hgv.status === activeFilter;
     
     return matchesSearch && matchesFilter;
@@ -156,6 +158,11 @@ export default function Home() {
   // Toggle settings visibility
   const toggleSettings = () => {
     setShowSettings(!showSettings);
+  };
+
+  // Toggle driver names visibility
+  const toggleDrivers = () => {
+    setShowDrivers(!showDrivers);
   };
 
   // Handle file upload button click
@@ -386,7 +393,7 @@ export default function Home() {
             hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
             status: row.Status || row.status || 'Yard',
             location: row.Location || row.location || 'N/A',
-            driver: row.Driver || row.driver || 'N/A',
+            driver: row.Driver || row.driver || row.Name || row.name || 'N/A',
             lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
           }));
           break;
@@ -448,7 +455,7 @@ export default function Home() {
             hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
             status: row.Status || row.status || 'Yard',
             location: row.Location || row.location || 'N/A',
-            driver: row.Driver || row.driver || 'N/A',
+            driver: row.Driver || row.driver || row.Name || row.name || 'N/A',
             lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
           }));
           break;
@@ -474,7 +481,7 @@ export default function Home() {
             hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
             status: row.Status || row.status || 'Yard',
             location: row.Location || row.location || 'N/A',
-            driver: row.Driver || row.driver || 'N/A',
+            driver: row.Driver || row.driver || row.Name || row.name || 'N/A',
             lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
           }));
           break;
@@ -664,7 +671,8 @@ export default function Home() {
       padding: "6px 10px",
       borderRadius: "5px",
       border: "1px solid #ccc",
-      fontFamily: "inherit"
+      fontFamily: "inherit",
+      width: "200px"
     },
     filterBtn: {
       padding: "6px 12px",
@@ -791,6 +799,17 @@ export default function Home() {
       marginBottom: "10px",
       alignSelf: "flex-end"
     },
+    driversToggle: {
+      backgroundColor: "#673ab7",
+      color: "white",
+      border: "none",
+      borderRadius: "5px",
+      padding: "5px 10px",
+      cursor: "pointer",
+      fontSize: "14px",
+      marginBottom: "10px",
+      marginRight: "10px"
+    },
     fileInput: {
       display: "none" // Hidden file input
     },
@@ -903,6 +922,24 @@ export default function Home() {
       borderImageSlice: 1,
       borderWidth: "1px",
       borderStyle: "solid"
+    },
+    // Driver name display
+    driverTag: {
+      position: "absolute",
+      top: "-10px",
+      right: "-10px",
+      backgroundColor: "#673ab7",
+      color: "white",
+      padding: "2px 8px",
+      borderRadius: "10px",
+      fontSize: "11px",
+      fontWeight: "bold",
+      zIndex: 10,
+      boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+      maxWidth: "100px",
+      textOverflow: "ellipsis",
+      overflow: "hidden",
+      whiteSpace: "nowrap"
     }
   };
 
@@ -972,6 +1009,11 @@ export default function Home() {
     to { transform: rotate(360deg); }
   }
 
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   .route .hgv-container, .running-defect .hgv-container {
     animation: driving 3s infinite ease-in-out;
   }
@@ -1006,6 +1048,10 @@ export default function Home() {
   .hgv-container:hover .tooltip {
     visibility: visible;
     opacity: 1;
+  }
+  
+  .driver-tag {
+    animation: fadeIn 0.3s ease-in;
   }
   `;
 
@@ -1175,8 +1221,18 @@ export default function Home() {
          styles.yardSelect)
     };
     
+    // Show driver tag if driver is assigned and showDrivers is true
+    const showDriverTag = showDrivers && driver && driver !== 'N/A';
+    
     return (
       <div style={styles.hgv}>
+        {/* Driver name tag */}
+        {showDriverTag && (
+          <div className="driver-tag" style={styles.driverTag} title={driver}>
+            {driver}
+          </div>
+        )}
+        
         <div className={statusClass} style={{ width: "100%" }}>
           <div className="hgv-container" style={hgvStyles.hgvContainer}>
             <div style={hgvStyles.tooltip}>{tooltipText}</div>
@@ -1242,12 +1298,21 @@ export default function Home() {
       <div style={styles.body}>
         <h1 style={styles.h1}>HGV Status Dashboard</h1>
         
-        <button 
-          style={styles.settingsToggle} 
-          onClick={toggleSettings}
-        >
-          {showSettings ? 'Hide Excel Settings' : 'Show Excel Settings'}
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+          <button 
+            style={styles.driversToggle} 
+            onClick={toggleDrivers}
+          >
+            {showDrivers ? 'Hide Driver Names' : 'Show Driver Names'}
+          </button>
+          
+          <button 
+            style={styles.settingsToggle} 
+            onClick={toggleSettings}
+          >
+            {showSettings ? 'Hide Excel Settings' : 'Show Excel Settings'}
+          </button>
+        </div>
         
         <div style={{
           ...styles.excelSettings,
@@ -1406,7 +1471,7 @@ export default function Home() {
           <div style={styles.searchControls}>
             <input 
               type="text" 
-              placeholder="Search HGV..." 
+              placeholder="Search HGV or Driver..." 
               value={searchText}
               onChange={handleSearchInputChange}
               style={styles.searchInput}
