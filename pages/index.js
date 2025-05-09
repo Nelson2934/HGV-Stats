@@ -15,7 +15,7 @@ export default function Home() {
   const [activeFilter, setActiveFilter] = useState('all');
   const [lastUpdated, setLastUpdated] = useState('Not yet updated');
   const [showSettings, setShowSettings] = useState(false);
-  const [excelSourceType, setExcelSourceType] = useState('mockData');
+  const [excelSourceType, setExcelSourceType] = useState('fileUpload');
   const [excelUrl, setExcelUrl] = useState('');
   const [sheetName, setSheetName] = useState('Sheet1');
   const [apiKey, setApiKey] = useState('');
@@ -31,11 +31,14 @@ export default function Home() {
   const [confirmCallback, setConfirmCallback] = useState(null);
   const [totalHGVs, setTotalHGVs] = useState(57);
   const [hgvData, setHgvData] = useState([]);
+  const [uploadedFile, setUploadedFile] = useState(null);
 
   // Refs for timers
   const updateTimerRef = useRef(null);
   const countdownTimerRef = useRef(null);
+  const fileInputRef = useRef(null);
   const papaParseRef = useRef(null);
+  const xlsxRef = useRef(null);
 
   // Initialize dashboard
   useEffect(() => {
@@ -49,13 +52,17 @@ export default function Home() {
     };
   }, []);
 
-  // Load Papa Parse dynamically
+  // Load external libraries dynamically
   useEffect(() => {
     // Check if we're in browser environment
     if (typeof window !== 'undefined') {
       // Make sure Papa is loaded
       if (window.Papa) {
         papaParseRef.current = window.Papa;
+      }
+      // Make sure XLSX is loaded
+      if (window.XLSX) {
+        xlsxRef.current = window.XLSX;
       }
     }
   }, []);
@@ -66,26 +73,22 @@ export default function Home() {
     const newStatusCounts = {
       'VOR': 0,
       'On Route': 0,
-      'Yard': 0,
+      'Yard': totalHGVs, // All HGVs start as Yard status
       'Running Defect': 0
     };
 
     // Create HGV elements
     for (let i = 1; i <= totalHGVs; i++) {
-      // Default to random status if no data
-      const statusOptions = ['VOR', 'On Route', 'Yard', 'Running Defect'];
-      const randomStatus = statusOptions[Math.floor(Math.random() * statusOptions.length)];
+      // All start with Yard status
+      const defaultStatus = 'Yard';
       
       // Create HGV element
       newHgvElements.push({
         id: i,
-        status: randomStatus,
+        status: defaultStatus,
         location: 'N/A',
         driver: 'N/A'
       });
-      
-      // Increment status count
-      newStatusCounts[randomStatus]++;
     }
     
     setHgvElements(newHgvElements);
@@ -155,6 +158,22 @@ export default function Home() {
     setShowSettings(!showSettings);
   };
 
+  // Handle file upload button click
+  const handleFileUploadClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handle file upload change
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setUploadedFile(file);
+      setConnectionStatus('File selected: ' + file.name);
+    }
+  };
+
   // Connect to Excel
   const connectToExcel = async () => {
     // Stop any existing timers
@@ -182,25 +201,28 @@ export default function Home() {
       // Update HGVs with data
       updateHGVsFromData(initialData);
       
-      // Start update timer
-      updateTimerRef.current = setInterval(async () => {
-        const newData = await fetchHGVData();
-        if (newData) {
-          updateHGVsFromData(newData);
-        }
-      }, updateIntervalMs);
-      
-      // Start countdown timer
-      let countdown = updateIntervalMs / 1000;
-      setNextUpdate(countdown);
-      
-      countdownTimerRef.current = setInterval(() => {
-        countdown--;
-        if (countdown < 0) {
-          countdown = updateIntervalMs / 1000;
-        }
+      // Only set up timers for non-file upload sources
+      if (excelSourceType !== 'fileUpload') {
+        // Start update timer
+        updateTimerRef.current = setInterval(async () => {
+          const newData = await fetchHGVData();
+          if (newData) {
+            updateHGVsFromData(newData);
+          }
+        }, updateIntervalMs);
+        
+        // Start countdown timer
+        let countdown = updateIntervalMs / 1000;
         setNextUpdate(countdown);
-      }, 1000);
+        
+        countdownTimerRef.current = setInterval(() => {
+          countdown--;
+          if (countdown < 0) {
+            countdown = updateIntervalMs / 1000;
+          }
+          setNextUpdate(countdown);
+        }, 1000);
+      }
     } else {
       // Connection failed
       setIsConnected(false);
@@ -224,6 +246,12 @@ export default function Home() {
     // Update status
     setIsConnected(false);
     setConnectionStatus('Disconnected');
+    setUploadedFile(null);
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   // Handle connect/disconnect button click
@@ -258,7 +286,7 @@ export default function Home() {
     const newInterval = parseInt(e.target.value);
     setUpdateIntervalMs(newInterval);
     
-    if (isConnected) {
+    if (isConnected && excelSourceType !== 'fileUpload') {
       // Restart timers with new interval
       if (updateTimerRef.current) {
         clearInterval(updateTimerRef.current);
@@ -286,151 +314,57 @@ export default function Home() {
     }
   };
 
-// Fetch HGV data from Excel or mock data
-const fetchHGVData = async () => {
-  if (!isConnected && excelSourceType !== 'mockData') return null;
-  
-  // Show loader while fetching
-  setShowLoader(true);
-  setConnectionStatus('Updating...');
-  
-  try {
-    // Different handling based on source type
-    let data;
-    
-    switch (excelSourceType) {
-      case 'mockData':
-        // Use mock data for demo
-        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
-        data = generateMockData(totalHGVs);
-        break;
-        
-      case 'googleSheets':
-        // For a real implementation, you would use the Google Sheets API
-        if (!excelUrl && excelUrl !== 'default') throw new Error('Google Sheet URL or ID is required');
-        
-        // Use our server-side API route to bypass CORS
-        let apiUrl = '/api/google-sheet';
-        
-        // If a custom URL was provided, pass it to the API
-        if (excelUrl !== 'default') {
-          apiUrl += `?url=${encodeURIComponent(excelUrl)}`;
-        }
-        
-        console.log('Fetching from API:', apiUrl);
-        const apiResponse = await fetch(apiUrl);
-        
-        if (!apiResponse.ok) {
-          const errorData = await apiResponse.json();
-          throw new Error(`Failed to fetch data: ${errorData.error || apiResponse.statusText}`);
-        }
-        
-        const { csv } = await apiResponse.json();
-        
-        // Parse CSV to data
-        if (!papaParseRef.current) {
-          throw new Error('PapaParse library not loaded');
-        }
-        
-        const parseResult = papaParseRef.current.parse(csv, { 
-          header: true, 
-          skipEmptyLines: true,
-          dynamicTyping: true
-        });
-        
-        if (parseResult.errors.length > 0) {
-          console.warn('CSV parsing errors:', parseResult.errors);
-          if (parseResult.errors[0].message.includes('Delimiter')) {
-            // Try another delimiter
-            const retryResult = papaParseRef.current.parse(csv, { 
-              header: true, 
-              skipEmptyLines: true,
-              dynamicTyping: true,
-              delimiter: ',' // Explicitly try comma
-            });
-            if (retryResult.errors.length === 0 || retryResult.data.length > 0) {
-              console.log('Successfully parsed with explicit comma delimiter');
-              parseResult.data = retryResult.data;
-            }
-          }
-        }
-        
-        console.log('Parsed data:', parseResult.data.slice(0, 3));
-        
-        // Transform to our format
-        data = parseResult.data.map(row => ({
-          hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
-          status: row.Status || row.status || 'Yard',
-          location: row.Location || row.location || 'N/A',
-          driver: row.Driver || row.driver || 'N/A',
-          lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
-        }));
-        break;
-        
-      case 'microsoftExcel':
-        // For a real implementation, you would use Microsoft Graph API
-        throw new Error('Microsoft Excel Online integration requires authentication. Try using the Mock Data option for demonstration.');
-        
-      case 'sheetdb':
-        // SheetDB is a service that provides API access to Google Sheets
-        if (!excelUrl) throw new Error('SheetDB API endpoint is required');
-        
-        const apiEndpoint = excelUrl;
-        const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
-        
-        const sheetDbResponse = await fetch(apiEndpoint, { headers });
-        if (!sheetDbResponse.ok) throw new Error(`Failed to fetch data: ${sheetDbResponse.statusText}`);
-        
-        const sheetData = await sheetDbResponse.json();
-        
-        // Transform to our format
-        data = sheetData.map(row => ({
-          hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
-          status: row.Status || row.status || 'Yard',
-          location: row.Location || row.location || 'N/A',
-          driver: row.Driver || row.driver || 'N/A',
-          lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
-        }));
-        break;
-        
-      default:
-        throw new Error('Unknown data source type');
-    }
-    
-    // Validate and clean data
-    data = data.filter(item => !isNaN(item.hgvNumber) && item.hgvNumber > 0);
-    
-    // Ensure status is one of the valid options
-    const validStatuses = ['VOR', 'On Route', 'Yard', 'Running Defect'];
-    data.forEach(item => {
-      if (!validStatuses.includes(item.status)) {
-        item.status = 'Yard'; // Default to Yard for invalid status
+  // Read Excel file
+  const readExcelFile = (file) => {
+    return new Promise((resolve, reject) => {
+      if (!file) {
+        reject(new Error('No file selected'));
+        return;
       }
+      
+      if (!xlsxRef.current) {
+        reject(new Error('XLSX library not loaded'));
+        return;
+      }
+      
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = xlsxRef.current.read(data, { type: 'array' });
+          
+          // Get first sheet name if not specified
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName || firstSheetName];
+          
+          if (!worksheet) {
+            reject(new Error(`Sheet "${sheetName}" not found. Available sheets: ${workbook.SheetNames.join(', ')}`));
+            return;
+          }
+          
+          // Convert to JSON
+          const jsonData = xlsxRef.current.utils.sheet_to_json(worksheet);
+          console.log('Excel data loaded:', jsonData.slice(0, 3));
+          
+          resolve(jsonData);
+        } catch (error) {
+          console.error('Error parsing Excel file:', error);
+          reject(new Error(`Failed to parse Excel file: ${error.message}`));
+        }
+      };
+      
+      reader.onerror = () => {
+        reject(new Error('Error reading file'));
+      };
+      
+      reader.readAsArrayBuffer(file);
     });
-    
-    // Update total HGVs if data contains more
-    if (data.length > totalHGVs) {
-      setTotalHGVs(data.length);
-    }
-    
-    // Hide loader and update status
-    setShowLoader(false);
-    setConnectionStatus('Connected');
-    
-    return data;
-  } catch (error) {
-    console.error('Error fetching data:', error);
-    
-    // Hide loader and update status
-    setShowLoader(false);
-    setConnectionStatus(`Error: ${error.message}`);
-    
-    // Show error modal
-    showErrorDialog(`Failed to fetch data: ${error.message}`);
-    
-    return null;
-  }
-};
+  };
+
+  // Fetch HGV data from various sources
+  const fetchHGVData = async () => {
+    if (!isConnected && excelSourceType !== 'fileUpload') return null;
     
     // Show loader while fetching
     setShowLoader(true);
@@ -441,52 +375,77 @@ const fetchHGVData = async () => {
       let data;
       
       switch (excelSourceType) {
-        case 'mockData':
-          // Use mock data for demo
-          await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
-          data = generateMockData(totalHGVs);
+        case 'fileUpload':
+          // Process uploaded Excel file
+          if (!uploadedFile) throw new Error('No file selected');
+          
+          const excelData = await readExcelFile(uploadedFile);
+          
+          // Transform Excel data to our format
+          data = excelData.map(row => ({
+            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
+            status: row.Status || row.status || 'Yard',
+            location: row.Location || row.location || 'N/A',
+            driver: row.Driver || row.driver || 'N/A',
+            lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
+          }));
           break;
           
         case 'googleSheets':
           // For a real implementation, you would use the Google Sheets API
-          if (!excelUrl) throw new Error('Google Sheet URL or ID is required');
+          if (!excelUrl && excelUrl !== 'default') throw new Error('Google Sheet URL or ID is required');
           
-          // Check if URL is provided or just ID
-          let sheetUrl = excelUrl;
+          // Use our server-side API route to bypass CORS
+          let apiUrl = '/api/google-sheet';
           
-          // If it looks like just an ID, form the export URL
-          if (!sheetUrl.includes('http')) {
-            sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetUrl}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
-          } else if (!sheetUrl.includes('out:csv')) {
-            // If it's a full URL but not export URL, try to form export URL
-            // Extract ID from URL (this is simplified)
-            const match = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
-            if (match && match[1]) {
-              sheetUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
-            } else {
-              throw new Error('Invalid Google Sheets URL format');
-            }
+          // If a custom URL was provided, pass it to the API
+          if (excelUrl !== 'default') {
+            apiUrl += `?url=${encodeURIComponent(excelUrl)}`;
           }
           
-          // Fetch CSV data
-          const response = await fetch(sheetUrl);
-          if (!response.ok) throw new Error(`Failed to fetch data: ${response.statusText}`);
+          console.log('Fetching from API:', apiUrl);
+          const apiResponse = await fetch(apiUrl);
           
-          const csvText = await response.text();
+          if (!apiResponse.ok) {
+            const errorData = await apiResponse.json();
+            throw new Error(`Failed to fetch data: ${errorData.error || apiResponse.statusText}`);
+          }
+          
+          const { csv } = await apiResponse.json();
           
           // Parse CSV to data
           if (!papaParseRef.current) {
             throw new Error('PapaParse library not loaded');
           }
           
-          const parseResult = papaParseRef.current.parse(csvText, { header: true, skipEmptyLines: true });
+          const parseResult = papaParseRef.current.parse(csv, { 
+            header: true, 
+            skipEmptyLines: true,
+            dynamicTyping: true
+          });
+          
           if (parseResult.errors.length > 0) {
-            throw new Error(`CSV parsing error: ${parseResult.errors[0].message}`);
+            console.warn('CSV parsing errors:', parseResult.errors);
+            if (parseResult.errors[0].message.includes('Delimiter')) {
+              // Try another delimiter
+              const retryResult = papaParseRef.current.parse(csv, { 
+                header: true, 
+                skipEmptyLines: true,
+                dynamicTyping: true,
+                delimiter: ',' // Explicitly try comma
+              });
+              if (retryResult.errors.length === 0 || retryResult.data.length > 0) {
+                console.log('Successfully parsed with explicit comma delimiter');
+                parseResult.data = retryResult.data;
+              }
+            }
           }
+          
+          console.log('Parsed data:', parseResult.data.slice(0, 3));
           
           // Transform to our format
           data = parseResult.data.map(row => ({
-            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || '0'),
+            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
             status: row.Status || row.status || 'Yard',
             location: row.Location || row.location || 'N/A',
             driver: row.Driver || row.driver || 'N/A',
@@ -496,7 +455,7 @@ const fetchHGVData = async () => {
           
         case 'microsoftExcel':
           // For a real implementation, you would use Microsoft Graph API
-          throw new Error('Microsoft Excel Online integration requires authentication. Try using the Mock Data option for demonstration.');
+          throw new Error('Microsoft Excel Online integration requires authentication. Try using File Upload instead.');
           
         case 'sheetdb':
           // SheetDB is a service that provides API access to Google Sheets
@@ -512,7 +471,7 @@ const fetchHGVData = async () => {
           
           // Transform to our format
           data = sheetData.map(row => ({
-            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || '0'),
+            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
             status: row.Status || row.status || 'Yard',
             location: row.Location || row.location || 'N/A',
             driver: row.Driver || row.driver || 'N/A',
@@ -542,7 +501,9 @@ const fetchHGVData = async () => {
       
       // Hide loader and update status
       setShowLoader(false);
-      setConnectionStatus('Connected');
+      setConnectionStatus(excelSourceType === 'fileUpload' 
+        ? `File loaded: ${uploadedFile.name}` 
+        : 'Connected');
       
       return data;
     } catch (error) {
@@ -557,32 +518,6 @@ const fetchHGVData = async () => {
       
       return null;
     }
-  };
-
-  // Generate mock data for demo purposes
-  const generateMockData = (numHGVs = totalHGVs) => {
-    const statuses = ['VOR', 'On Route', 'Yard', 'Running Defect'];
-    const mockData = [];
-    
-    for (let i = 1; i <= numHGVs; i++) {
-      // Weighted distribution to make it more realistic
-      let statusIndex;
-      const rand = Math.random();
-      if (rand < 0.15) statusIndex = 0; // 15% VOR
-      else if (rand < 0.55) statusIndex = 1; // 40% On Route
-      else if (rand < 0.80) statusIndex = 2; // 25% Yard
-      else statusIndex = 3; // 20% Running Defect
-      
-      mockData.push({
-        hgvNumber: i,
-        status: statuses[statusIndex],
-        location: statusIndex === 1 ? ['London', 'Birmingham', 'Manchester', 'Leeds', 'Glasgow'][Math.floor(Math.random() * 5)] : 'N/A',
-        driver: statusIndex === 1 ? ['Smith', 'Jones', 'Williams', 'Brown', 'Taylor'][Math.floor(Math.random() * 5)] : 'N/A',
-        lastUpdated: new Date().toISOString()
-      });
-    }
-    
-    return mockData;
   };
 
   // Update HGV displays with new data
@@ -632,6 +567,14 @@ const fetchHGVData = async () => {
       // Count statuses
       newStatusCounts[hgvData.status]++;
     });
+    
+    // Count remaining HGVs as Yard if they weren't in the data
+    for (let i = 0; i < newHgvElements.length; i++) {
+      const found = data.some(item => item.hgvNumber === newHgvElements[i].id);
+      if (!found) {
+        newStatusCounts['Yard']++;
+      }
+    }
     
     // Update state
     setHgvElements(newHgvElements);
@@ -796,6 +739,16 @@ const fetchHGVData = async () => {
       borderRadius: "5px",
       border: "1px solid #ccc"
     },
+    uploadBtn: {
+      padding: "8px 16px",
+      backgroundColor: "#2196F3",
+      color: "white",
+      border: "none",
+      borderRadius: "5px",
+      cursor: "pointer",
+      fontWeight: "bold",
+      transition: "all 0.2s"
+    },
     connectBtn: {
       padding: "8px 16px",
       backgroundColor: "#4caf50",
@@ -837,6 +790,9 @@ const fetchHGVData = async () => {
       fontSize: "14px",
       marginBottom: "10px",
       alignSelf: "flex-end"
+    },
+    fileInput: {
+      display: "none" // Hidden file input
     },
     // Modal styles
     modal: {
@@ -1297,7 +1253,7 @@ const fetchHGVData = async () => {
           ...styles.excelSettings,
           ...(showSettings ? {} : styles.excelSettingsHidden)
         }}>
-          <h2 style={styles.excelH2}>Connect to Online Excel</h2>
+          <h2 style={styles.excelH2}>Excel Data Source</h2>
           <div style={styles.excelRow}>
             <label htmlFor="excelSource">Source Type:</label>
             <select 
@@ -1307,63 +1263,98 @@ const fetchHGVData = async () => {
               style={styles.excelSelect}
               disabled={isConnected}
             >
+              <option value="fileUpload">Excel File Upload</option>
               <option value="googleSheets">Google Sheets</option>
               <option value="microsoftExcel">Microsoft Excel Online</option>
               <option value="sheetdb">SheetDB API</option>
-              <option value="mockData">Use Mock Data (Demo)</option>
             </select>
           </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="excelUrl">Excel URL/ID:</label>
-            <input 
-              type="text" 
-              id="excelUrl" 
-              placeholder="Paste your Excel URL or Sheet ID here"
-              value={excelUrl}
-              onChange={(e) => setExcelUrl(e.target.value)}
-              style={styles.excelInput}
-              disabled={isConnected}
-            />
-          </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="sheetName">Sheet Name:</label>
-            <input 
-              type="text" 
-              id="sheetName" 
-              placeholder="Sheet1" 
-              value={sheetName}
-              onChange={(e) => setSheetName(e.target.value)}
-              style={styles.excelInput}
-              disabled={isConnected}
-            />
-          </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="apiKey">API Key (if needed):</label>
-            <input 
-              type="password" 
-              id="apiKey" 
-              placeholder="Optional"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              style={styles.excelInput}
-              disabled={isConnected}
-            />
-          </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="updateInterval">Update Interval:</label>
-            <select 
-              id="updateInterval" 
-              value={updateIntervalMs}
-              onChange={handleIntervalChange}
-              style={styles.excelSelect}
-            >
-              <option value="5000">5 seconds</option>
-              <option value="10000">10 seconds</option>
-              <option value="30000">30 seconds</option>
-              <option value="60000">1 minute</option>
-              <option value="300000">5 minutes</option>
-            </select>
-          </div>
+          
+          {/* Show different options based on source type */}
+          {excelSourceType === 'fileUpload' ? (
+            <div style={styles.excelRow}>
+              <label htmlFor="excelFile">Excel File:</label>
+              <input 
+                type="file" 
+                id="excelFile"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileChange}
+                ref={fileInputRef}
+                style={styles.fileInput}
+                disabled={isConnected}
+              />
+              <button 
+                style={styles.uploadBtn} 
+                onClick={handleFileUploadClick}
+                disabled={isConnected}
+              >
+                Select Excel File
+              </button>
+              <span>{uploadedFile ? uploadedFile.name : 'No file selected'}</span>
+            </div>
+          ) : (
+            <div style={styles.excelRow}>
+              <label htmlFor="excelUrl">Excel URL/ID:</label>
+              <input 
+                type="text" 
+                id="excelUrl" 
+                placeholder="Paste your Excel URL or Sheet ID here"
+                value={excelUrl}
+                onChange={(e) => setExcelUrl(e.target.value)}
+                style={styles.excelInput}
+                disabled={isConnected}
+              />
+            </div>
+          )}
+          
+          {excelSourceType !== 'fileUpload' && (
+            <div style={styles.excelRow}>
+              <label htmlFor="sheetName">Sheet Name:</label>
+              <input 
+                type="text" 
+                id="sheetName" 
+                placeholder="Sheet1" 
+                value={sheetName}
+                onChange={(e) => setSheetName(e.target.value)}
+                style={styles.excelInput}
+                disabled={isConnected}
+              />
+            </div>
+          )}
+          
+          {excelSourceType === 'sheetdb' && (
+            <div style={styles.excelRow}>
+              <label htmlFor="apiKey">API Key (if needed):</label>
+              <input 
+                type="password" 
+                id="apiKey" 
+                placeholder="Optional"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                style={styles.excelInput}
+                disabled={isConnected}
+              />
+            </div>
+          )}
+          
+          {excelSourceType !== 'fileUpload' && (
+            <div style={styles.excelRow}>
+              <label htmlFor="updateInterval">Update Interval:</label>
+              <select 
+                id="updateInterval" 
+                value={updateIntervalMs}
+                onChange={handleIntervalChange}
+                style={styles.excelSelect}
+              >
+                <option value="5000">5 seconds</option>
+                <option value="10000">10 seconds</option>
+                <option value="30000">30 seconds</option>
+                <option value="60000">1 minute</option>
+                <option value="300000">5 minutes</option>
+              </select>
+            </div>
+          )}
+          
           <div style={styles.excelRow}>
             <button 
               style={styles.connectBtn} 
@@ -1380,11 +1371,14 @@ const fetchHGVData = async () => {
             </span>
             {showLoader && <div style={styles.loader}></div>}
           </div>
-          <div style={styles.excelRow}>
-            <span style={styles.intervalDisplay}>
-              Next update in <span>{nextUpdate}</span> seconds
-            </span>
-          </div>
+          
+          {excelSourceType !== 'fileUpload' && isConnected && (
+            <div style={styles.excelRow}>
+              <span style={styles.intervalDisplay}>
+                Next update in <span>{nextUpdate}</span> seconds
+              </span>
+            </div>
+          )}
         </div>
         
         <div style={styles.dashboardHeader}>
@@ -1541,15 +1535,14 @@ const fetchHGVData = async () => {
         </div>
       )}
       
-      {/* Load PapaParse from CDN */}
+      {/* Load required libraries */}
       <Script
         src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"
-        strategy="afterInteractive"
-        onLoad={() => {
-          if (typeof window !== 'undefined' && window.Papa) {
-            papaParseRef.current = window.Papa;
-          }
-        }}
+        strategy="beforeInteractive"
+      />
+      <Script
+        src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+        strategy="beforeInteractive"
       />
     </>
   );
