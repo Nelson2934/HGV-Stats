@@ -1,167 +1,540 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import Script from 'next/script';
 
 export default function Home() {
-  // State definitions
+  // State variables
   const [hgvElements, setHgvElements] = useState([]);
   const [statusCounts, setStatusCounts] = useState({
     'VOR': 0,
     'On Route': 0,
     'Yard': 0,
-    'Running Defect': 0,
+    'Running Defect': 0
   });
   const [searchText, setSearchText] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
-  const [lastUpdated, setLastUpdated] = useState('Never');
+  const [lastUpdated, setLastUpdated] = useState('Not yet updated');
+  const [showSettings, setShowSettings] = useState(false);
+  const [excelSourceType, setExcelSourceType] = useState('fileUpload');
   const [excelUrl, setExcelUrl] = useState('');
   const [sheetName, setSheetName] = useState('Sheet1');
   const [apiKey, setApiKey] = useState('');
-  const [excelSourceType, setExcelSourceType] = useState('googleSheets');
-  const [isConnected, setIsConnected] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('Not Connected');
-  const [showSettings, setShowSettings] = useState(true);
-  const [showLoader, setShowLoader] = useState(false);
   const [updateIntervalMs, setUpdateIntervalMs] = useState(10000);
-  const [nextUpdate, setNextUpdate] = useState(10);
+  const [connectionStatus, setConnectionStatus] = useState('Not connected');
+  const [isConnected, setIsConnected] = useState(false);
+  const [showLoader, setShowLoader] = useState(false);
+  const [nextUpdate, setNextUpdate] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [modalMessage, setModalMessage] = useState('');
-  const [confirmCallback, setConfirmCallback] = useState(null);
   const [showErrorModal, setShowErrorModal] = useState(false);
+  const [modalMessage, setModalMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  
-  // Refs
-  const papaParseRef = useRef(null);
-  const timerRef = useRef(null);
+  const [confirmCallback, setConfirmCallback] = useState(null);
+  const [totalHGVs, setTotalHGVs] = useState(57);
+  const [hgvData, setHgvData] = useState([]);
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [showDrivers, setShowDrivers] = useState(true); // Show driver names
+  const [exportFilename, setExportFilename] = useState('HGV_Data.xlsx'); // Default export filename
+
+  // Refs for timers
   const updateTimerRef = useRef(null);
-  
-  // Constants
-  const totalHGVs = 50; // Default number of HGVs to generate for mock data
+  const countdownTimerRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const papaParseRef = useRef(null);
+  const xlsxRef = useRef(null);
+  const exportFileInputRef = useRef(null);
 
-  // Effect for initializing PapaParse
+  // Initialize dashboard
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.Papa) {
-      papaParseRef.current = window.Papa;
-    }
-  }, []);
-
-  // Effect for handling data updates
-  useEffect(() => {
-    // Clear any existing timers when component unmounts
+    initializeDashboard();
+    updateLastUpdated();
+    
+    // Cleanup timers on unmount
     return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      if (updateTimerRef.current) {
-        clearInterval(updateTimerRef.current);
-      }
+      if (updateTimerRef.current) clearInterval(updateTimerRef.current);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     };
   }, []);
 
-  // Effect for handling data fetching based on connection status
+  // Load external libraries dynamically
   useEffect(() => {
-    if (isConnected) {
-      // Fetch data immediately
-      fetchData();
-      
-      // Set up interval for automatic updates
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
+    // Check if we're in browser environment
+    if (typeof window !== 'undefined') {
+      // Make sure Papa is loaded
+      if (window.Papa) {
+        papaParseRef.current = window.Papa;
       }
-      
-      timerRef.current = setInterval(() => {
-        fetchData();
-      }, updateIntervalMs);
-      
-      // Set up interval for countdown timer
-      if (updateTimerRef.current) {
-        clearInterval(updateTimerRef.current);
+      // Make sure XLSX is loaded
+      if (window.XLSX) {
+        xlsxRef.current = window.XLSX;
       }
+    }
+  }, []);
+
+  // Initialize dashboard with HGVs
+  const initializeDashboard = () => {
+    const newHgvElements = [];
+    const newStatusCounts = {
+      'VOR': 0,
+      'On Route': 0,
+      'Yard': totalHGVs, // All HGVs start as Yard status
+      'Running Defect': 0
+    };
+
+    // Create HGV elements
+    for (let i = 1; i <= totalHGVs; i++) {
+      // All start with Yard status
+      const defaultStatus = 'Yard';
       
-      setNextUpdate(Math.floor(updateIntervalMs / 1000));
-      updateTimerRef.current = setInterval(() => {
-        setNextUpdate(prev => (prev > 0 ? prev - 1 : Math.floor(updateIntervalMs / 1000)));
-      }, 1000);
-    } else {
-      // Clear intervals when disconnected
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      
-      if (updateTimerRef.current) {
-        clearInterval(updateTimerRef.current);
-        updateTimerRef.current = null;
-      }
+      // Create HGV element
+      newHgvElements.push({
+        id: i,
+        status: defaultStatus,
+        location: 'N/A',
+        driver: 'N/A'
+      });
     }
     
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      if (updateTimerRef.current) {
-        clearInterval(updateTimerRef.current);
-      }
-    };
-  }, [isConnected, updateIntervalMs]);
+    setHgvElements(newHgvElements);
+    setStatusCounts(newStatusCounts);
+  };
 
-  // Function to fetch data - now properly async
-  const fetchData = async () => {
+  // Update the "last updated" timestamp
+  const updateLastUpdated = () => {
+    setLastUpdated(new Date().toLocaleString());
+  };
+
+  // Handle status change for an HGV
+  const handleStatusChange = (id, newStatus, previousStatus) => {
+    setStatusCounts(prev => ({
+      ...prev,
+      [previousStatus]: prev[previousStatus] - 1,
+      [newStatus]: prev[newStatus] + 1
+    }));
+    
+    setHgvElements(prev => prev.map(hgv => 
+      hgv.id === id ? { ...hgv, status: newStatus } : hgv
+    ));
+    
+    updateLastUpdated();
+  };
+
+  // Filter HGVs based on search input and filter button
+  const filterHGVs = (hgv) => {
+    const matchesSearch = searchText === '' || 
+      hgv.id.toString().toLowerCase().includes(searchText.toLowerCase()) ||
+      (hgv.driver && hgv.driver !== 'N/A' && hgv.driver.toLowerCase().includes(searchText.toLowerCase()));
+    const matchesFilter = activeFilter === 'all' || hgv.status === activeFilter;
+    
+    return matchesSearch && matchesFilter;
+  };
+
+  // Handle search input change
+  const handleSearchInputChange = (e) => {
+    setSearchText(e.target.value);
+  };
+
+  // Handle filter button click
+  const handleFilterClick = (filter) => {
+    setActiveFilter(filter);
+  };
+
+  // Handle clear button click
+  const handleClearClick = () => {
+    showConfirmDialog(
+      'Are you sure you want to set all HGVs to "Yard" status?',
+      () => {
+        const newStatusCounts = {
+          'VOR': 0,
+          'On Route': 0,
+          'Yard': totalHGVs,
+          'Running Defect': 0
+        };
+        
+        setHgvElements(prev => prev.map(hgv => ({ ...hgv, status: 'Yard' })));
+        setStatusCounts(newStatusCounts);
+        updateLastUpdated();
+      }
+    );
+  };
+
+  // Toggle settings visibility
+  const toggleSettings = () => {
+    setShowSettings(!showSettings);
+  };
+
+  // Toggle driver names visibility
+  const toggleDrivers = () => {
+    setShowDrivers(!showDrivers);
+  };
+
+  // Handle file upload button click
+  const handleFileUploadClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handle file upload change
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setUploadedFile(file);
+      setConnectionStatus('File selected: ' + file.name);
+      
+      // Set default export filename based on uploaded file
+      if (file.name) {
+        // Add "Updated_" prefix to the filename
+        const nameParts = file.name.split('.');
+        if (nameParts.length > 1) {
+          const ext = nameParts.pop();
+          const baseName = nameParts.join('.');
+          setExportFilename(`Updated_${baseName}.${ext}`);
+        } else {
+          setExportFilename(`Updated_${file.name}`);
+        }
+      }
+    }
+  };
+
+  // Handle export filename change
+  const handleExportFilenameChange = (e) => {
+    setExportFilename(e.target.value);
+  };
+
+  // Connect to Excel
+  const connectToExcel = async () => {
+    // Stop any existing timers
+    if (updateTimerRef.current) {
+      clearInterval(updateTimerRef.current);
+      updateTimerRef.current = null;
+    }
+    
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    
+    // Set connection status
+    setConnectionStatus('Connecting...');
     setShowLoader(true);
-    let data = [];
+    
+    // Initial data fetch
+    const initialData = await fetchHGVData();
+    
+    if (initialData) {
+      // Connection successful
+      setIsConnected(true);
+      
+      // Update HGVs with data
+      updateHGVsFromData(initialData);
+      
+      // Only set up timers for non-file upload sources
+      if (excelSourceType !== 'fileUpload') {
+        // Start update timer
+        updateTimerRef.current = setInterval(async () => {
+          const newData = await fetchHGVData();
+          if (newData) {
+            updateHGVsFromData(newData);
+          }
+        }, updateIntervalMs);
+        
+        // Start countdown timer
+        let countdown = updateIntervalMs / 1000;
+        setNextUpdate(countdown);
+        
+        countdownTimerRef.current = setInterval(() => {
+          countdown--;
+          if (countdown < 0) {
+            countdown = updateIntervalMs / 1000;
+          }
+          setNextUpdate(countdown);
+        }, 1000);
+      }
+    } else {
+      // Connection failed
+      setIsConnected(false);
+      setShowLoader(false);
+    }
+  };
+
+  // Disconnect from Excel
+  const disconnectFromExcel = () => {
+    // Stop timers
+    if (updateTimerRef.current) {
+      clearInterval(updateTimerRef.current);
+      updateTimerRef.current = null;
+    }
+    
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    
+    // Update status
+    setIsConnected(false);
+    setConnectionStatus('Disconnected');
+    setUploadedFile(null);
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Handle connect/disconnect button click
+  const handleConnectClick = () => {
+    if (isConnected) {
+      // Already connected, so disconnect
+      showConfirmDialog(
+        'Are you sure you want to disconnect from Excel?',
+        disconnectFromExcel
+      );
+    } else {
+      // Not connected, so connect
+      connectToExcel();
+    }
+  };
+
+  // Export current data to Excel
+  const exportToExcel = () => {
+    if (!xlsxRef.current) {
+      showErrorDialog('XLSX library not loaded. Please reload the page and try again.');
+      return;
+    }
     
     try {
+      // Prepare data for export
+      const dataToExport = hgvElements.map(hgv => ({
+        'HGV_Number': hgv.id,
+        'Status': hgv.status,
+        'Driver': hgv.driver,
+        'Location': hgv.location,
+        'Last_Updated': new Date().toISOString()
+      }));
+      
+      // Create worksheet
+      const ws = xlsxRef.current.utils.json_to_sheet(dataToExport);
+      
+      // Create workbook
+      const wb = xlsxRef.current.utils.book_new();
+      xlsxRef.current.utils.book_append_sheet(wb, ws, 'HGV Data');
+      
+      // Generate file and trigger download
+      xlsxRef.current.writeFile(wb, exportFilename);
+      
+      // Show success message
+      showSuccessMessage(`Data exported successfully to ${exportFilename}`);
+    } catch (error) {
+      console.error('Error exporting data:', error);
+      showErrorDialog(`Failed to export data: ${error.message}`);
+    }
+  };
+
+  // Show confirmation modal
+  const showConfirmDialog = (message, callback) => {
+    setModalMessage(message);
+    setConfirmCallback(() => callback);
+    setShowConfirmModal(true);
+  };
+
+  // Show error modal
+  const showErrorDialog = (message) => {
+    setErrorMessage(message);
+    setShowErrorModal(true);
+  };
+  
+  // Show success message with timeout
+  const showSuccessMessage = (message) => {
+    setConnectionStatus(`Success: ${message}`);
+    setTimeout(() => {
+      if (isConnected) {
+        setConnectionStatus('Connected');
+      } else {
+        setConnectionStatus('Not connected');
+      }
+    }, 3000);
+  };
+
+  // Handle interval change
+  const handleIntervalChange = (e) => {
+    const newInterval = parseInt(e.target.value);
+    setUpdateIntervalMs(newInterval);
+    
+    if (isConnected && excelSourceType !== 'fileUpload') {
+      // Restart timers with new interval
+      if (updateTimerRef.current) {
+        clearInterval(updateTimerRef.current);
+        updateTimerRef.current = setInterval(async () => {
+          const newData = await fetchHGVData();
+          if (newData) {
+            updateHGVsFromData(newData);
+          }
+        }, newInterval);
+      }
+      
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+        let countdown = newInterval / 1000;
+        setNextUpdate(countdown);
+        
+        countdownTimerRef.current = setInterval(() => {
+          countdown--;
+          if (countdown < 0) {
+            countdown = newInterval / 1000;
+          }
+          setNextUpdate(countdown);
+        }, 1000);
+      }
+    }
+  };
+
+  // Read Excel file
+  const readExcelFile = (file) => {
+    return new Promise((resolve, reject) => {
+      if (!file) {
+        reject(new Error('No file selected'));
+        return;
+      }
+      
+      if (!xlsxRef.current) {
+        reject(new Error('XLSX library not loaded'));
+        return;
+      }
+      
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = xlsxRef.current.read(data, { type: 'array' });
+          
+          // Get first sheet name if not specified
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName || firstSheetName];
+          
+          if (!worksheet) {
+            reject(new Error(`Sheet "${sheetName}" not found. Available sheets: ${workbook.SheetNames.join(', ')}`));
+            return;
+          }
+          
+          // Convert to JSON
+          const jsonData = xlsxRef.current.utils.sheet_to_json(worksheet);
+          console.log('Excel data loaded:', jsonData.slice(0, 3));
+          
+          resolve(jsonData);
+        } catch (error) {
+          console.error('Error parsing Excel file:', error);
+          reject(new Error(`Failed to parse Excel file: ${error.message}`));
+        }
+      };
+      
+      reader.onerror = () => {
+        reject(new Error('Error reading file'));
+      };
+      
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  // Fetch HGV data from various sources
+  const fetchHGVData = async () => {
+    if (!isConnected && excelSourceType !== 'fileUpload') return null;
+    
+    // Show loader while fetching
+    setShowLoader(true);
+    setConnectionStatus('Updating...');
+    
+    try {
+      // Different handling based on source type
+      let data;
+      
       switch (excelSourceType) {
-        case 'mockData':
-          // Use mock data for demo
-          await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
-          data = generateMockData(totalHGVs);
-          break;
+        case 'fileUpload':
+          // Process uploaded Excel file
+          if (!uploadedFile) throw new Error('No file selected');
           
-        case 'googleSheets':
-          // Process for Google Sheets
-          let sheetUrl = '';
+          const excelData = await readExcelFile(uploadedFile);
           
-          if (excelUrl.includes('docs.google.com')) {
-            // Full URL is provided
-            sheetUrl = `${excelUrl.replace('/edit#gid=0', '')}/export?format=csv`;
-          } else {
-            // Just the sheet ID is provided
-            sheetUrl = `https://docs.google.com/spreadsheets/d/${excelUrl}/export?format=csv`;
-          }
-          
-          // Fetch CSV data
-          const response = await fetch(sheetUrl);
-          if (!response.ok) throw new Error(`Failed to fetch data: ${response.statusText}`);
-          
-          const csvText = await response.text();
-          
-          // Parse CSV to data
-          if (!papaParseRef.current) {
-            throw new Error('PapaParse not loaded');
-          }
-          
-          const parseResult = papaParseRef.current.parse(csvText, {
-            header: true,
-            skipEmptyLines: true
-          });
-          
-          if (parseResult.errors.length > 0) {
-            throw new Error(`CSV parsing error: ${parseResult.errors[0].message}`);
-          }
-          
-          // Transform to our format
-          data = parseResult.data.map((row, index) => ({
-            id: row.id || `hgv-${index + 1}`,
-            name: row.name || `HGV-${index + 1}`,
-            status: row.status || 'Yard',
-            details: row.details || '',
-            lastUpdated: row.lastUpdated || new Date().toLocaleString()
+          // Transform Excel data to our format
+          data = excelData.map(row => ({
+            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
+            status: row.Status || row.status || 'Yard',
+            location: row.Location || row.location || 'N/A',
+            driver: row.Driver || row.driver || row.Name || row.name || 'N/A',
+            lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
           }));
           break;
           
+        case 'googleSheets':
+          // For a real implementation, you would use the Google Sheets API
+          if (!excelUrl && excelUrl !== 'default') throw new Error('Google Sheet URL or ID is required');
+          
+          // Use our server-side API route to bypass CORS
+          let apiUrl = '/api/google-sheet';
+          
+          // If a custom URL was provided, pass it to the API
+          if (excelUrl !== 'default') {
+            apiUrl += `?url=${encodeURIComponent(excelUrl)}`;
+          }
+          
+          console.log('Fetching from API:', apiUrl);
+          const apiResponse = await fetch(apiUrl);
+          
+          if (!apiResponse.ok) {
+            const errorData = await apiResponse.json();
+            throw new Error(`Failed to fetch data: ${errorData.error || apiResponse.statusText}`);
+          }
+          
+          const { csv } = await apiResponse.json();
+          
+          // Parse CSV to data
+          if (!papaParseRef.current) {
+            throw new Error('PapaParse library not loaded');
+          }
+          
+          const parseResult = papaParseRef.current.parse(csv, { 
+            header: true, 
+            skipEmptyLines: true,
+            dynamicTyping: true
+          });
+          
+          if (parseResult.errors.length > 0) {
+            console.warn('CSV parsing errors:', parseResult.errors);
+            if (parseResult.errors[0].message.includes('Delimiter')) {
+              // Try another delimiter
+              const retryResult = papaParseRef.current.parse(csv, { 
+                header: true, 
+                skipEmptyLines: true,
+                dynamicTyping: true,
+                delimiter: ',' // Explicitly try comma
+              });
+              if (retryResult.errors.length === 0 || retryResult.data.length > 0) {
+                console.log('Successfully parsed with explicit comma delimiter');
+                parseResult.data = retryResult.data;
+              }
+            }
+          }
+          
+          console.log('Parsed data:', parseResult.data.slice(0, 3));
+          
+          // Transform to our format
+          data = parseResult.data.map(row => ({
+            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
+            status: row.Status || row.status || 'Yard',
+            location: row.Location || row.location || 'N/A',
+            driver: row.Driver || row.driver || row.Name || row.name || 'N/A',
+            lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
+          }));
+          break;
+          
+        case 'microsoftExcel':
+          // For a real implementation, you would use Microsoft Graph API
+          throw new Error('Microsoft Excel Online integration requires authentication. Try using File Upload instead.');
+          
         case 'sheetdb':
-          // Process for SheetDB API
+          // SheetDB is a service that provides API access to Google Sheets
+          if (!excelUrl) throw new Error('SheetDB API endpoint is required');
+          
           const apiEndpoint = excelUrl;
           const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
           
@@ -172,796 +545,490 @@ export default function Home() {
           
           // Transform to our format
           data = sheetData.map(row => ({
-            id: row.id || row.ID || `hgv-${Math.random().toString(36).substring(2, 9)}`,
-            name: row.name || row.Name || `HGV-${Math.random().toString(36).substring(2, 9)}`,
-            status: row.status || row.Status || 'Yard',
-            details: row.details || row.Details || '',
-            lastUpdated: row.lastUpdated || row['Last Updated'] || new Date().toLocaleString()
+            hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
+            status: row.Status || row.status || 'Yard',
+            location: row.Location || row.location || 'N/A',
+            driver: row.Driver || row.driver || row.Name || row.name || 'N/A',
+            lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
           }));
           break;
           
         default:
-          throw new Error(`Unsupported Excel source type: ${excelSourceType}`);
+          throw new Error('Unknown data source type');
       }
       
-      // Update state with the fetched data
-      setHgvElements(data);
+      // Validate and clean data
+      data = data.filter(item => !isNaN(item.hgvNumber) && item.hgvNumber > 0);
       
-      // Update status counts
-      const counts = {
-        'VOR': 0,
-        'On Route': 0,
-        'Yard': 0,
-        'Running Defect': 0
-      };
-      
-      data.forEach(hgv => {
-        if (counts[hgv.status] !== undefined) {
-          counts[hgv.status]++;
+      // Ensure status is one of the valid options
+      const validStatuses = ['VOR', 'On Route', 'Yard', 'Running Defect'];
+      data.forEach(item => {
+        if (!validStatuses.includes(item.status)) {
+          item.status = 'Yard'; // Default to Yard for invalid status
         }
       });
       
-      setStatusCounts(counts);
+      // Update total HGVs if data contains more
+      if (data.length > totalHGVs) {
+        setTotalHGVs(data.length);
+      }
       
-      // Update last updated timestamp
-      setLastUpdated(new Date().toLocaleString());
-      
-      setConnectionStatus('Connected');
+      // Hide loader and update status
       setShowLoader(false);
+      setConnectionStatus(excelSourceType === 'fileUpload' 
+        ? `File loaded: ${uploadedFile.name}` 
+        : 'Connected');
       
+      return data;
     } catch (error) {
       console.error('Error fetching data:', error);
-      setErrorMessage(`Failed to fetch data: ${error.message}`);
-      setShowErrorModal(true);
-      setConnectionStatus(`Error: ${error.message}`);
+      
+      // Hide loader and update status
       setShowLoader(false);
+      setConnectionStatus(`Error: ${error.message}`);
+      
+      // Show error modal
+      showErrorDialog(`Failed to fetch data: ${error.message}`);
+      
+      return null;
     }
   };
 
-  // Mock data generator function
-  const generateMockData = (count) => {
-    const statuses = ['VOR', 'On Route', 'Yard', 'Running Defect'];
-    const mockData = [];
+  // Update HGV displays with new data
+  const updateHGVsFromData = (data) => {
+    if (!data || !Array.isArray(data)) return;
     
-    for (let i = 1; i <= count; i++) {
-      mockData.push({
-        id: `hgv-${i}`,
-        name: `HGV-${i}`,
-        status: statuses[Math.floor(Math.random() * statuses.length)],
-        details: `This is vehicle ${i}`,
-        lastUpdated: new Date().toLocaleString()
-      });
-    }
+    // Store data for reference
+    setHgvData(data);
     
-    return mockData;
-  };
-
-  // Handler functions
-  const handleConnectClick = () => {
-    if (!isConnected) {
-      // Connect logic
-      if (excelSourceType !== 'mockData' && !excelUrl) {
-        setErrorMessage('Please enter an Excel URL or Sheet ID');
-        setShowErrorModal(true);
-        return;
-      }
-      
-      setIsConnected(true);
-      setConnectionStatus('Connecting...');
-      setShowLoader(true);
-      
-      // Note: fetchData will be called by the useEffect that monitors isConnected
-    } else {
-      // Disconnect logic
-      setModalMessage('Are you sure you want to disconnect? This will stop live updates.');
-      setConfirmCallback(() => () => {
-        setIsConnected(false);
-        setConnectionStatus('Not Connected');
-        setHgvElements([]);
-        setStatusCounts({
-          'VOR': 0,
-          'On Route': 0,
-          'Yard': 0,
-          'Running Defect': 0
-        });
-        setLastUpdated('Never');
-      });
-      setShowConfirmModal(true);
-    }
-  };
-
-  const handleIntervalChange = (e) => {
-    const newInterval = parseInt(e.target.value, 10);
-    setUpdateIntervalMs(newInterval);
-    setNextUpdate(Math.floor(newInterval / 1000));
-  };
-
-  const toggleSettings = () => {
-    setShowSettings(!showSettings);
-  };
-
-  const handleSearchInputChange = (e) => {
-    setSearchText(e.target.value);
-  };
-
-  const handleFilterClick = (filter) => {
-    setActiveFilter(filter);
-  };
-
-  const handleClearClick = () => {
-    setModalMessage('Are you sure you want to clear all status indicators? This cannot be undone.');
-    setConfirmCallback(() => () => {
-      // Clear logic here
-      setHgvElements(prev => prev.map(hgv => ({
-        ...hgv,
-        status: 'Yard',
-        lastUpdated: new Date().toLocaleString()
-      })));
-      
-      // Update status counts
-      setStatusCounts({
-        'VOR': 0,
-        'On Route': 0,
-        'Yard': hgvElements.length,
-        'Running Defect': 0
-      });
-    });
-    setShowConfirmModal(true);
-  };
-
-  // Filter function for HGV elements
-  const filterHGVs = (hgv) => {
-    const nameMatch = hgv.name.toLowerCase().includes(searchText.toLowerCase());
-    const statusMatch = activeFilter === 'all' || hgv.status === activeFilter;
-    return nameMatch && statusMatch;
-  };
-
-  // HGV component
-  const HGV = ({ hgv }) => {
-    // Get status style based on hgv status
-    const getStatusStyle = (status) => {
-      switch (status) {
-        case 'VOR':
-          return styles.statusVor;
-        case 'On Route':
-          return styles.statusRoute;
-        case 'Yard':
-          return styles.statusYard;
-        case 'Running Defect':
-          return styles.statusDefect;
-        default:
-          return styles.statusUnknown;
-      }
+    // Reset status counts
+    const newStatusCounts = {
+      'VOR': 0,
+      'On Route': 0,
+      'Yard': 0,
+      'Running Defect': 0
     };
-
-    return (
-      <div style={styles.hgvCard}>
-        <div style={{...styles.hgvStatus, ...getStatusStyle(hgv.status)}}>
-          {hgv.status}
-        </div>
-        <div style={styles.hgvName}>{hgv.name}</div>
-        <div style={styles.hgvDetails}>{hgv.details}</div>
-        <div style={styles.hgvUpdated}>
-          Updated: {hgv.lastUpdated}
-        </div>
-      </div>
-    );
-  };
-
-  // CSS-in-JS styles
-  const keyframes = `
-    @keyframes pulse {
-      0% { transform: scale(1); }
-      50% { transform: scale(1.05); }
-      100% { transform: scale(1); }
+    
+    // Process each HGV with data
+    const newHgvElements = [...hgvElements];
+    
+    // First extend array if needed
+    while (newHgvElements.length < data.length) {
+      newHgvElements.push({
+        id: newHgvElements.length + 1,
+        status: 'Yard',
+        location: 'N/A',
+        driver: 'N/A'
+      });
     }
     
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+    // Update each HGV with data
+    data.forEach(hgvData => {
+      const hgvIndex = hgvData.hgvNumber - 1;
+      
+      // Validate index
+      if (hgvIndex < 0 || hgvIndex >= newHgvElements.length) return;
+      
+      // Update HGV
+      newHgvElements[hgvIndex] = {
+        ...newHgvElements[hgvIndex],
+        id: hgvData.hgvNumber,
+        status: hgvData.status,
+        location: hgvData.location,
+        driver: hgvData.driver
+      };
+      
+      // Count statuses
+      newStatusCounts[hgvData.status]++;
+    });
+    
+    // Count remaining HGVs as Yard if they weren't in the data
+    for (let i = 0; i < newHgvElements.length; i++) {
+      const found = data.some(item => item.hgvNumber === newHgvElements[i].id);
+      if (!found) {
+        newStatusCounts['Yard']++;
+      }
     }
-  `;
+    
+    // Update state
+    setHgvElements(newHgvElements);
+    setStatusCounts(newStatusCounts);
+    updateLastUpdated();
+  };
 
+  // CSS Styles
   const styles = {
     body: {
-      fontFamily: 'Arial, sans-serif',
-      maxWidth: '1200px',
-      margin: '0 auto',
-      padding: '20px',
-      backgroundColor: '#f5f5f5',
+      fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+      padding: "20px",
+      backgroundColor: "#f8f9fa",
+      margin: "0",
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center",
+      height: "100vh",
+      overflow: "auto"
     },
     h1: {
-      textAlign: 'center',
-      color: '#333',
-      margin: '20px 0 30px 0',
-    },
-    grid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-      gap: '15px',
-      marginTop: '20px',
-    },
-    hgvCard: {
-      backgroundColor: 'white',
-      borderRadius: '5px',
-      padding: '15px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-      position: 'relative',
-      transition: 'transform 0.2s',
-      cursor: 'pointer',
-    },
-    hgvStatus: {
-      position: 'absolute',
-      top: '10px',
-      right: '10px',
-      borderRadius: '12px',
-      padding: '5px 10px',
-      fontSize: '12px',
-      fontWeight: 'bold',
-    },
-    statusVor: {
-      backgroundColor: '#ffcccc',
-      color: '#cc0000',
-    },
-    statusRoute: {
-      backgroundColor: '#ccffcc',
-      color: '#006600',
-    },
-    statusYard: {
-      backgroundColor: '#ffffcc',
-      color: '#996600',
-    },
-    statusDefect: {
-      backgroundColor: '#ccccff',
-      color: '#0000cc',
-    },
-    statusUnknown: {
-      backgroundColor: '#cccccc',
-      color: '#666666',
-    },
-    hgvName: {
-      fontWeight: 'bold',
-      fontSize: '18px',
-      marginBottom: '10px',
-      paddingRight: '70px',
-    },
-    hgvDetails: {
-      fontSize: '14px',
-      color: '#666',
-      marginBottom: '15px',
-      height: '40px',
-      overflow: 'hidden',
-    },
-    hgvUpdated: {
-      fontSize: '12px',
-      color: '#999',
-      textAlign: 'right',
-      marginTop: '5px',
+      textAlign: "center",
+      marginBottom: "30px",
+      color: "#1e3a8a",
+      fontSize: "28px"
     },
     dashboardHeader: {
-      display: 'flex',
-      justifyContent: 'center',
-      margin: '20px 0',
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: "0 20px",
+      marginBottom: "20px"
     },
     stats: {
-      display: 'flex',
-      justifyContent: 'space-around',
-      width: '100%',
-      backgroundColor: 'white',
-      borderRadius: '5px',
-      padding: '15px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      display: "flex",
+      gap: "20px",
+      fontWeight: "bold"
     },
     statItem: {
-      textAlign: 'center',
-      padding: '10px 20px',
-      borderRadius: '5px',
+      display: "flex",
+      alignItems: "center",
+      gap: "5px",
+      padding: "5px 10px",
+      borderRadius: "5px"
     },
     statVor: {
-      backgroundColor: '#ffeeee',
+      backgroundColor: "#ffebee",
+      color: "#d32f2f"
     },
     statRoute: {
-      backgroundColor: '#eeffee',
+      backgroundColor: "#e8f5e9",
+      color: "#2e7d32"
     },
     statYard: {
-      backgroundColor: '#ffffee',
+      backgroundColor: "#e3f2fd",
+      color: "#1976d2"
     },
     statDefect: {
-      backgroundColor: '#eeeeff',
+      background: 'linear-gradient(to right, #e8f5e9 50%, #ffebee 50%)',
+      color: "#333"
     },
     statCount: {
-      display: 'block',
-      fontSize: '24px',
-      fontWeight: 'bold',
-      marginTop: '5px',
+      fontSize: "18px"
+    },
+    grid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+      gap: "15px",
+      padding: "15px",
+      justifyContent: "center",
+      alignItems: "start",
+      height: "70vh",
+      overflow: "auto"
     },
     searchFilter: {
-      backgroundColor: 'white',
-      padding: '15px',
-      marginBottom: '20px',
-      borderRadius: '5px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      display: "flex",
+      justifyContent: "space-between",
+      gap: "10px",
+      marginBottom: "15px",
+      padding: "0 20px"
     },
     searchControls: {
-      display: 'flex',
-      marginBottom: '15px',
+      display: "flex",
+      gap: "10px"
     },
     searchInput: {
-      flex: '1',
-      padding: '8px 12px',
-      border: '1px solid #ddd',
-      borderRadius: '4px',
-      fontSize: '16px',
-    },
-    clearBtn: {
-      marginLeft: '10px',
-      padding: '8px 15px',
-      backgroundColor: '#f44336',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontWeight: 'bold',
+      padding: "6px 10px",
+      borderRadius: "5px",
+      border: "1px solid #ccc",
+      fontFamily: "inherit",
+      width: "200px"
     },
     filterBtn: {
-      margin: '0 5px',
-      padding: '8px 15px',
-      backgroundColor: '#f1f1f1',
-      border: '1px solid #ddd',
-      borderRadius: '4px',
-      cursor: 'pointer',
+      padding: "6px 12px",
+      border: "none",
+      borderRadius: "5px",
+      backgroundColor: "#f0f0f0",
+      cursor: "pointer",
+      transition: "background-color .2s"
     },
     filterBtnActive: {
-      backgroundColor: '#4CAF50',
-      color: 'white',
-      borderColor: '#4CAF50',
+      backgroundColor: "#2196F3",
+      color: "white"
+    },
+    clearBtn: {
+      padding: "6px 12px",
+      border: "none",
+      borderRadius: "5px",
+      backgroundColor: "#ff5722",
+      color: "white",
+      cursor: "pointer",
+      transition: "all .2s",
+      fontWeight: "bold"
+    },
+    exportBtn: {
+      padding: "6px 12px",
+      border: "none",
+      borderRadius: "5px",
+      backgroundColor: "#009688",
+      color: "white",
+      cursor: "pointer",
+      transition: "all .2s",
+      fontWeight: "bold",
+      marginLeft: "10px"
+    },
+    clearBtnHover: {
+      backgroundColor: "#e64a19",
+      transform: "scale(1.05)"
     },
     lastUpdated: {
-      textAlign: 'center',
-      fontSize: '14px',
-      color: '#666',
-      marginTop: '20px',
+      textAlign: "center",
+      fontSize: "12px",
+      color: "#666",
+      marginTop: "10px"
     },
+    // Excel Settings styles
     excelSettings: {
-      backgroundColor: 'white',
-      padding: '15px',
-      marginBottom: '20px',
-      borderRadius: '5px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-      transition: 'max-height 0.3s, opacity 0.3s, padding 0.3s',
-      maxHeight: '500px',
-      opacity: 1,
-      overflow: 'visible',
+      display: "flex",
+      flexDirection: "column",
+      gap: "10px",
+      padding: "20px",
+      marginBottom: "20px",
+      backgroundColor: "#f0f8ff",
+      borderRadius: "8px",
+      border: "1px solid #bed6f5"
     },
     excelSettingsHidden: {
-      maxHeight: '0',
-      padding: '0 15px',
-      opacity: '0',
-      overflow: 'hidden',
-      marginBottom: '0',
+      height: 0,
+      overflow: "hidden",
+      padding: 0,
+      margin: 0,
+      border: "none",
+      transition: "all 0.3s"
     },
     excelH2: {
-      fontSize: '18px',
-      marginTop: '0',
-      marginBottom: '15px',
+      marginTop: 0,
+      fontSize: "18px",
+      color: "#1e3a8a"
     },
     excelRow: {
-      display: 'flex',
-      alignItems: 'center',
-      marginBottom: '15px',
+      display: "flex",
+      gap: "10px",
+      alignItems: "center"
     },
     excelInput: {
-      flex: '1',
-      padding: '8px 12px',
-      border: '1px solid #ddd',
-      borderRadius: '4px',
-      fontSize: '14px',
-      marginLeft: '10px',
+      flex: 1,
+      padding: "8px",
+      borderRadius: "5px",
+      border: "1px solid #ccc"
     },
     excelSelect: {
-      flex: '1',
-      padding: '8px 12px',
-      border: '1px solid #ddd',
-      borderRadius: '4px',
-      fontSize: '14px',
-      backgroundColor: 'white',
-      marginLeft: '10px',
+      flex: 1,
+      padding: "8px",
+      borderRadius: "5px",
+      border: "1px solid #ccc"
+    },
+    uploadBtn: {
+      padding: "8px 16px",
+      backgroundColor: "#2196F3",
+      color: "white",
+      border: "none",
+      borderRadius: "5px",
+      cursor: "pointer",
+      fontWeight: "bold",
+      transition: "all 0.2s"
     },
     connectBtn: {
-      padding: '8px 15px',
-      backgroundColor: '#4CAF50',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontWeight: 'bold',
-      fontSize: '14px',
+      padding: "8px 16px",
+      backgroundColor: "#4caf50",
+      color: "white",
+      border: "none",
+      borderRadius: "5px",
+      cursor: "pointer",
+      fontWeight: "bold",
+      transition: "all 0.2s"
+    },
+    statusValue: {
+      fontWeight: "normal",
+      color: "#333"
     },
     statusConnected: {
-      marginLeft: '10px',
-      color: '#4CAF50',
-      fontWeight: 'bold',
-    },
-    statusWaiting: {
-      marginLeft: '10px',
-      color: '#FFA500',
+      color: "#2e7d32"
     },
     statusError: {
-      marginLeft: '10px',
-      color: '#f44336',
+      color: "#d32f2f"
     },
-    loader: {
-      border: '3px solid #f3f3f3',
-      borderTop: '3px solid #3498db',
-      borderRadius: '50%',
-      width: '20px',
-      height: '20px',
-      animation: 'spin 1s linear infinite',
-      marginLeft: '10px',
+    statusWaiting: {
+      color: "#ff9800"
     },
-    settingsToggle: {
-      display: 'block',
-      margin: '0 auto 20px auto',
-      padding: '8px 15px',
-      backgroundColor: '#2196F3',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
+    excelDisabled: {
+      backgroundColor: "#f5f5f5",
+      cursor: "not-allowed"
     },
     intervalDisplay: {
-      fontSize: '14px',
-      color: '#666',
+      fontSize: "12px",
+      color: "#666"
     },
+    settingsToggle: {
+      backgroundColor: "#1e3a8a",
+      color: "white",
+      border: "none",
+      borderRadius: "5px",
+      padding: "5px 10px",
+      cursor: "pointer",
+      fontSize: "14px",
+      marginBottom: "10px",
+      marginLeft: "10px"
+    },
+    driversToggle: {
+      backgroundColor: "#673ab7",
+      color: "white",
+      border: "none",
+      borderRadius: "5px",
+      padding: "5px 10px",
+      cursor: "pointer",
+      fontSize: "14px",
+      marginBottom: "10px"
+    },
+    fileInput: {
+      display: "none" // Hidden file input
+    },
+    // Modal styles
     modal: {
-      position: 'fixed',
-      top: '0',
-      left: '0',
-      width: '100%',
-      height: '100%',
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: '9999',
-      visibility: 'hidden',
-      opacity: '0',
-      transition: 'visibility 0s linear 0.25s, opacity 0.25s',
+      display: "none",
+      position: "fixed",
+      zIndex: 1000,
+      left: 0,
+      top: 0,
+      width: "100%",
+      height: "100%",
+      backgroundColor: "rgba(0,0,0,0.7)",
+      overflow: "auto"
     },
     modalVisible: {
-      visibility: 'visible',
-      opacity: '1',
-      transition: 'visibility 0s linear 0s, opacity 0.25s',
+      display: "block"
     },
     modalContent: {
-      backgroundColor: 'white',
-      padding: '20px',
-      borderRadius: '5px',
-      width: '80%',
-      maxWidth: '500px',
-      position: 'relative',
+      backgroundColor: "#f8f9fa",
+      margin: "15% auto",
+      padding: "20px",
+      borderRadius: "8px",
+      width: "50%",
+      boxShadow: "0 4px 8px rgba(0,0,0,0.2)"
     },
     closeModal: {
-      position: 'absolute',
-      top: '10px',
-      right: '15px',
-      fontSize: '24px',
-      fontWeight: 'bold',
-      cursor: 'pointer',
+      color: "#aaa",
+      float: "right",
+      fontSize: "28px",
+      fontWeight: "bold",
+      cursor: "pointer"
     },
     modalH2: {
-      fontSize: '18px',
-      marginTop: '0',
+      marginTop: 0,
+      color: "#1e3a8a"
     },
     modalP: {
-      marginBottom: '20px',
+      marginBottom: "20px"
     },
     modalButtons: {
-      display: 'flex',
-      justifyContent: 'flex-end',
+      display: "flex",
+      justifyContent: "flex-end",
+      gap: "10px"
     },
     modalBtn: {
-      padding: '8px 15px',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      marginLeft: '10px',
-      fontWeight: 'bold',
+      padding: "8px 16px",
+      border: "none",
+      borderRadius: "5px",
+      cursor: "pointer",
+      fontWeight: "bold"
     },
     modalCancel: {
-      backgroundColor: '#f1f1f1',
-      border: '1px solid #ddd',
-      color: '#333',
+      backgroundColor: "#f0f0f0",
+      color: "#333"
     },
     modalConfirm: {
-      backgroundColor: '#4CAF50',
-      color: 'white',
-      border: 'none',
+      backgroundColor: "#4caf50",
+      color: "white"
     },
     modalError: {
-      backgroundColor: '#f44336',
-      color: 'white',
-      border: 'none',
+      backgroundColor: "#d32f2f",
+      color: "white"
     },
-  };
-
-  // The component's return statement with JSX
-  return (
-    <>
-      <Head>
-        <title>HGV Status Dashboard</title>
-        <meta name="description" content="Track the status of your HGV fleet" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style dangerouslySetInnerHTML={{ __html: keyframes }} />
-      </Head>
-      
-      <div style={styles.body}>
-        <h1 style={styles.h1}>HGV Status Dashboard</h1>
-        
-        <button 
-          style={styles.settingsToggle} 
-          onClick={toggleSettings}
-        >
-          {showSettings ? 'Hide Excel Settings' : 'Show Excel Settings'}
-        </button>
-        
-        <div style={{
-          ...styles.excelSettings,
-          ...(showSettings ? {} : styles.excelSettingsHidden)
-        }}>
-          <h2 style={styles.excelH2}>Connect to Online Excel</h2>
-          <div style={styles.excelRow}>
-            <label htmlFor="excelSource">Source Type:</label>
-            <select 
-              id="excelSource" 
-              value={excelSourceType}
-              onChange={(e) => setExcelSourceType(e.target.value)}
-              style={styles.excelSelect}
-              disabled={isConnected}
-            >
-              <option value="googleSheets">Google Sheets</option>
-              <option value="microsoftExcel">Microsoft Excel Online</option>
-              <option value="sheetdb">SheetDB API</option>
-              <option value="mockData">Use Mock Data (Demo)</option>
-            </select>
-          </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="excelUrl">Excel URL/ID:</label>
-            <input 
-              type="text" 
-              id="excelUrl" 
-              placeholder="Paste your Excel URL or Sheet ID here"
-              value={excelUrl}
-              onChange={(e) => setExcelUrl(e.target.value)}
-              style={styles.excelInput}
-              disabled={isConnected}
-            />
-          </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="sheetName">Sheet Name:</label>
-            <input 
-              type="text" 
-              id="sheetName" 
-              placeholder="Sheet1" 
-              value={sheetName}
-              onChange={(e) => setSheetName(e.target.value)}
-              style={styles.excelInput}
-              disabled={isConnected}
-            />
-          </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="apiKey">API Key (if needed):</label>
-            <input 
-              type="password" 
-              id="apiKey" 
-              placeholder="Optional"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              style={styles.excelInput}
-              disabled={isConnected}
-            />
-          </div>
-          <div style={styles.excelRow}>
-            <label htmlFor="updateInterval">Update Interval:</label>
-            <select 
-              id="updateInterval" 
-              value={updateIntervalMs}
-              onChange={handleIntervalChange}
-              style={styles.excelSelect}
-            >
-              <option value="5000">5 seconds</option>
-              <option value="10000">10 seconds</option>
-              <option value="30000">30 seconds</option>
-              <option value="60000">1 minute</option>
-              <option value="300000">5 minutes</option>
-            </select>
-          </div>
-          <div style={styles.excelRow}>
-            <button 
-              style={styles.connectBtn} 
-              onClick={handleConnectClick}
-            >
-              {isConnected ? 'Disconnect' : 'Connect to Excel'}
-            </button>
-            <span style={{
-              ...(isConnected ? styles.statusConnected : 
-                 connectionStatus.includes('Error') ? styles.statusError : 
-                 styles.statusWaiting)
-            }}>
-              {connectionStatus}
-            </span>
-            {showLoader && <div style={styles.loader}></div>}
-          </div>
-          <div style={styles.excelRow}>
-            <span style={styles.intervalDisplay}>
-              Next update in <span>{nextUpdate}</span> seconds
-            </span>
-          </div>
-        </div>
-        
-        <div style={styles.dashboardHeader}>
-          <div style={styles.stats}>
-            <div style={{...styles.statItem, ...styles.statVor}}>
-              <span>VOR:</span>
-              <span style={styles.statCount}>{statusCounts['VOR']}</span>
-            </div>
-            <div style={{...styles.statItem, ...styles.statRoute}}>
-              <span>On Route:</span>
-              <span style={styles.statCount}>{statusCounts['On Route']}</span>
-            </div>
-            <div style={{...styles.statItem, ...styles.statYard}}>
-              <span>Yard:</span>
-              <span style={styles.statCount}>{statusCounts['Yard']}</span>
-            </div>
-            <div style={{...styles.statItem, ...styles.statDefect}}>
-              <span>Running Defect:</span>
-              <span style={styles.statCount}>{statusCounts['Running Defect']}</span>
-            </div>
-          </div>
-        </div>
-        
-        <div style={styles.searchFilter}>
-          <div style={styles.searchControls}>
-            <input 
-              type="text" 
-              placeholder="Search HGV..." 
-              value={searchText}
-              onChange={handleSearchInputChange}
-              style={styles.searchInput}
-            />
-            <button 
-              style={styles.clearBtn} 
-              onClick={handleClearClick}
-            >
-              Clear All Status
-            </button>
-          </div>
-          <div>
-            <button 
-              style={{
-                ...styles.filterBtn, 
-                ...(activeFilter === 'all' ? styles.filterBtnActive : {})
-              }} 
-              onClick={() => handleFilterClick('all')}
-            >
-              All
-            </button>
-            <button 
-              style={{
-                ...styles.filterBtn, 
-                ...(activeFilter === 'VOR' ? styles.filterBtnActive : {})
-              }} 
-              onClick={() => handleFilterClick('VOR')}
-            >
-              VOR
-            </button>
-            <button 
-              style={{
-                ...styles.filterBtn, 
-                ...(activeFilter === 'On Route' ? styles.filterBtnActive : {})
-              }} 
-              onClick={() => handleFilterClick('On Route')}
-            >
-              On Route
-            </button>
-            <button 
-              style={{
-                ...styles.filterBtn, 
-                ...(activeFilter === 'Yard' ? styles.filterBtnActive : {})
-              }} 
-              onClick={() => handleFilterClick('Yard')}
-            >
-              Yard
-            </button>
-            <button 
-              style={{
-                ...styles.filterBtn, 
-                ...(activeFilter === 'Running Defect' ? styles.filterBtnActive : {})
-              }} 
-              onClick={() => handleFilterClick('Running Defect')}
-            >
-              Running Defect
-            </button>
-          </div>
-        </div>
-        
-        <div style={styles.grid}>
-          {hgvElements.filter(filterHGVs).map(hgv => (
-            <HGV key={hgv.id} hgv={hgv} />
-          ))}
-        </div>
-        
-        <div style={styles.lastUpdated}>
-          Last updated: <span>{lastUpdated}</span>
-        </div>
-      </div>
-      
-      {/* Confirmation Modal */}
-      {showConfirmModal && (
-        <div style={{...styles.modal, ...styles.modalVisible}}>
-          <div style={styles.modalContent}>
-            <span 
-              style={styles.closeModal}
-              onClick={() => setShowConfirmModal(false)}
-            >
-              &times;
-            </span>
-            <h2 style={styles.modalH2}>Confirm Action</h2>
-            <p style={styles.modalP}>{modalMessage}</p>
-            <div style={styles.modalButtons}>
-              <button 
-                style={{...styles.modalBtn, ...styles.modalCancel}}
-                onClick={() => setShowConfirmModal(false)}
-              >
-                Cancel
-              </button>
-              <button 
-                style={{...styles.modalBtn, ...styles.modalConfirm}}
-                onClick={() => {
-                  setShowConfirmModal(false);
-                  if (confirmCallback) confirmCallback();
-                }}
-              >
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Error Modal */}
-      {showErrorModal && (
-        <div style={{...styles.modal, ...styles.modalVisible}}>
-          <div style={styles.modalContent}>
-            <span 
-              style={styles.closeModal}
-              onClick={() => setShowErrorModal(false)}
-            >
-              &times;
-            </span>
-            <h2 style={styles.modalH2}>Error</h2>
-            <p style={styles.modalP}>{errorMessage}</p>
-            <div style={styles.modalButtons}>
-              <button 
-                style={{...styles.modalBtn, ...styles.modalError}}
-                onClick={() => setShowErrorModal(false)}
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Load PapaParse from CDN */}
-      <Script
-        src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"
-        strategy="afterInteractive"
-        onLoad={() => {
-          if (typeof window !== 'undefined' && window.Papa) {
-            papaParseRef.current = window.Papa;
-          }
-        }}
-      />
-    </>
-  );
-}
+    // Loader
+    loader: {
+      display: "inline-block",
+      width: "20px",
+      height: "20px",
+      border: "3px solid rgba(0,0,0,0.1)",
+      borderRadius: "50%",
+      borderTop: "3px solid #2196F3",
+      animation: "spin 1s ease-in-out infinite",
+      marginLeft: "10px",
+      verticalAlign: "middle"
+    },
+    hidden: {
+      display: "none"
+    },
+    // HGV styles
+    hgv: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      padding: "15px",
+      borderRadius: "8px",
+      backgroundColor: "white",
+      boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+      transition: "transform 0.2s",
+      position: "relative"
+    },
+    select: {
+      marginTop: "10px",
+      width: "100%",
+      padding: "8px",
+      borderRadius: "5px",
+      border: "1px solid #ccc"
+    },
+    vorSelect: {
+      borderColor: "#d32f2f"
+    },
+    routeSelect: {
+      borderColor: "#2e7d32"
+    },
+    yardSelect: {
+      borderColor: "#1976d2"
+    },
+    runningDefectSelect: {
+      borderImage: 'linear-gradient(to right, #2e7d32 50%, #d32f2f 50%)',
+      borderImageSlice: 1,
+      borderWidth: "1px",
+      borderStyle: "solid"
+    },
+    // Driver name display
+    driverTag: {
+      position: "absolute",
+      top: "-10px",
+      right: "-10px",
+      backgroundColor: "#673ab7",
+      color: "white",
+      padding: "2px 8px",
+      borderRadius: "10px",
+      fontSize: "11px",
+      fontWeight: "bold",
+      zIndex: 10,
+      boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+      maxWidth: "100px",
+      textOverflow: "ellipsis",
+      overflow: "hidden",
+      whiteSpace: "nowrap"
+    },
+    // Export feature
+    exportSection: {
+      marginTop: "10px",
+      padding: "15px",
+      backgroundColor: "#e8f5e9",
+      borderRadius: "8px",
+      border: "1px solid #c8e6c9"
+    },
+    exportHeader: {
+      fontSize: "16px",
+      color: "#2e7d32",
+      marginTop: 0,
+      marginBottom: "10px"
+    }
