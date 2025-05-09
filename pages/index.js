@@ -32,7 +32,8 @@ export default function Home() {
   const [totalHGVs, setTotalHGVs] = useState(57);
   const [hgvData, setHgvData] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(null);
-  const [showDrivers, setShowDrivers] = useState(true); // New state for showing driver names
+  const [showDrivers, setShowDrivers] = useState(true); // Show driver names
+  const [exportFilename, setExportFilename] = useState('HGV_Data.xlsx'); // Default export filename
 
   // Refs for timers
   const updateTimerRef = useRef(null);
@@ -40,6 +41,7 @@ export default function Home() {
   const fileInputRef = useRef(null);
   const papaParseRef = useRef(null);
   const xlsxRef = useRef(null);
+  const exportFileInputRef = useRef(null);
 
   // Initialize dashboard
   useEffect(() => {
@@ -178,7 +180,25 @@ export default function Home() {
     if (file) {
       setUploadedFile(file);
       setConnectionStatus('File selected: ' + file.name);
+      
+      // Set default export filename based on uploaded file
+      if (file.name) {
+        // Add "Updated_" prefix to the filename
+        const nameParts = file.name.split('.');
+        if (nameParts.length > 1) {
+          const ext = nameParts.pop();
+          const baseName = nameParts.join('.');
+          setExportFilename(`Updated_${baseName}.${ext}`);
+        } else {
+          setExportFilename(`Updated_${file.name}`);
+        }
+      }
     }
+  };
+
+  // Handle export filename change
+  const handleExportFilenameChange = (e) => {
+    setExportFilename(e.target.value);
   };
 
   // Connect to Excel
@@ -275,6 +295,41 @@ export default function Home() {
     }
   };
 
+  // Export current data to Excel
+  const exportToExcel = () => {
+    if (!xlsxRef.current) {
+      showErrorDialog('XLSX library not loaded. Please reload the page and try again.');
+      return;
+    }
+    
+    try {
+      // Prepare data for export
+      const dataToExport = hgvElements.map(hgv => ({
+        'HGV_Number': hgv.id,
+        'Status': hgv.status,
+        'Driver': hgv.driver,
+        'Location': hgv.location,
+        'Last_Updated': new Date().toISOString()
+      }));
+      
+      // Create worksheet
+      const ws = xlsxRef.current.utils.json_to_sheet(dataToExport);
+      
+      // Create workbook
+      const wb = xlsxRef.current.utils.book_new();
+      xlsxRef.current.utils.book_append_sheet(wb, ws, 'HGV Data');
+      
+      // Generate file and trigger download
+      xlsxRef.current.writeFile(wb, exportFilename);
+      
+      // Show success message
+      showSuccessMessage(`Data exported successfully to ${exportFilename}`);
+    } catch (error) {
+      console.error('Error exporting data:', error);
+      showErrorDialog(`Failed to export data: ${error.message}`);
+    }
+  };
+
   // Show confirmation modal
   const showConfirmDialog = (message, callback) => {
     setModalMessage(message);
@@ -286,6 +341,18 @@ export default function Home() {
   const showErrorDialog = (message) => {
     setErrorMessage(message);
     setShowErrorModal(true);
+  };
+  
+  // Show success message with timeout
+  const showSuccessMessage = (message) => {
+    setConnectionStatus(`Success: ${message}`);
+    setTimeout(() => {
+      if (isConnected) {
+        setConnectionStatus('Connected');
+      } else {
+        setConnectionStatus('Not connected');
+      }
+    }, 3000);
   };
 
   // Handle interval change
@@ -696,6 +763,17 @@ export default function Home() {
       transition: "all .2s",
       fontWeight: "bold"
     },
+    exportBtn: {
+      padding: "6px 12px",
+      border: "none",
+      borderRadius: "5px",
+      backgroundColor: "#009688",
+      color: "white",
+      cursor: "pointer",
+      transition: "all .2s",
+      fontWeight: "bold",
+      marginLeft: "10px"
+    },
     clearBtnHover: {
       backgroundColor: "#e64a19",
       transform: "scale(1.05)"
@@ -797,7 +875,7 @@ export default function Home() {
       cursor: "pointer",
       fontSize: "14px",
       marginBottom: "10px",
-      alignSelf: "flex-end"
+      marginLeft: "10px"
     },
     driversToggle: {
       backgroundColor: "#673ab7",
@@ -807,8 +885,7 @@ export default function Home() {
       padding: "5px 10px",
       cursor: "pointer",
       fontSize: "14px",
-      marginBottom: "10px",
-      marginRight: "10px"
+      marginBottom: "10px"
     },
     fileInput: {
       display: "none" // Hidden file input
@@ -940,6 +1017,20 @@ export default function Home() {
       textOverflow: "ellipsis",
       overflow: "hidden",
       whiteSpace: "nowrap"
+    },
+    // Export feature
+    exportSection: {
+      marginTop: "10px",
+      padding: "15px",
+      backgroundColor: "#e8f5e9",
+      borderRadius: "8px",
+      border: "1px solid #c8e6c9"
+    },
+    exportHeader: {
+      fontSize: "16px",
+      color: "#2e7d32",
+      marginTop: 0,
+      marginBottom: "10px"
     }
   };
 
@@ -1444,6 +1535,33 @@ export default function Home() {
               </span>
             </div>
           )}
+          
+          {/* Export Section */}
+          {isConnected && (
+            <div style={styles.exportSection}>
+              <h3 style={styles.exportHeader}>Export Current Data</h3>
+              <div style={styles.excelRow}>
+                <label htmlFor="exportFilename">Export Filename:</label>
+                <input 
+                  type="text" 
+                  id="exportFilename" 
+                  placeholder="HGV_Data.xlsx" 
+                  value={exportFilename}
+                  onChange={handleExportFilenameChange}
+                  style={styles.excelInput}
+                />
+                <button 
+                  style={styles.exportBtn} 
+                  onClick={exportToExcel}
+                >
+                  Export to Excel
+                </button>
+              </div>
+              <p style={{ fontSize: "12px", marginTop: "5px", color: "#666" }}>
+                This will export the current HGV data with all your changes to an Excel file.
+              </p>
+            </div>
+          )}
         </div>
         
         <div style={styles.dashboardHeader}>
@@ -1482,6 +1600,15 @@ export default function Home() {
             >
               Clear All Status
             </button>
+            {/* Quick Export Button */}
+            {isConnected && (
+              <button 
+                style={styles.exportBtn} 
+                onClick={exportToExcel}
+              >
+                Export
+              </button>
+            )}
           </div>
           <div>
             <button 
