@@ -286,9 +286,151 @@ export default function Home() {
     }
   };
 
-  // Fetch HGV data from Excel or mock data
-  const fetchHGVData = async () => {
-    if (!isConnected && excelSourceType !== 'mockData') return null;
+// Fetch HGV data from Excel or mock data
+const fetchHGVData = async () => {
+  if (!isConnected && excelSourceType !== 'mockData') return null;
+  
+  // Show loader while fetching
+  setShowLoader(true);
+  setConnectionStatus('Updating...');
+  
+  try {
+    // Different handling based on source type
+    let data;
+    
+    switch (excelSourceType) {
+      case 'mockData':
+        // Use mock data for demo
+        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+        data = generateMockData(totalHGVs);
+        break;
+        
+      case 'googleSheets':
+        // For a real implementation, you would use the Google Sheets API
+        if (!excelUrl && excelUrl !== 'default') throw new Error('Google Sheet URL or ID is required');
+        
+        // Use our server-side API route to bypass CORS
+        let apiUrl = '/api/google-sheet';
+        
+        // If a custom URL was provided, pass it to the API
+        if (excelUrl !== 'default') {
+          apiUrl += `?url=${encodeURIComponent(excelUrl)}`;
+        }
+        
+        console.log('Fetching from API:', apiUrl);
+        const apiResponse = await fetch(apiUrl);
+        
+        if (!apiResponse.ok) {
+          const errorData = await apiResponse.json();
+          throw new Error(`Failed to fetch data: ${errorData.error || apiResponse.statusText}`);
+        }
+        
+        const { csv } = await apiResponse.json();
+        
+        // Parse CSV to data
+        if (!papaParseRef.current) {
+          throw new Error('PapaParse library not loaded');
+        }
+        
+        const parseResult = papaParseRef.current.parse(csv, { 
+          header: true, 
+          skipEmptyLines: true,
+          dynamicTyping: true
+        });
+        
+        if (parseResult.errors.length > 0) {
+          console.warn('CSV parsing errors:', parseResult.errors);
+          if (parseResult.errors[0].message.includes('Delimiter')) {
+            // Try another delimiter
+            const retryResult = papaParseRef.current.parse(csv, { 
+              header: true, 
+              skipEmptyLines: true,
+              dynamicTyping: true,
+              delimiter: ',' // Explicitly try comma
+            });
+            if (retryResult.errors.length === 0 || retryResult.data.length > 0) {
+              console.log('Successfully parsed with explicit comma delimiter');
+              parseResult.data = retryResult.data;
+            }
+          }
+        }
+        
+        console.log('Parsed data:', parseResult.data.slice(0, 3));
+        
+        // Transform to our format
+        data = parseResult.data.map(row => ({
+          hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
+          status: row.Status || row.status || 'Yard',
+          location: row.Location || row.location || 'N/A',
+          driver: row.Driver || row.driver || 'N/A',
+          lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
+        }));
+        break;
+        
+      case 'microsoftExcel':
+        // For a real implementation, you would use Microsoft Graph API
+        throw new Error('Microsoft Excel Online integration requires authentication. Try using the Mock Data option for demonstration.');
+        
+      case 'sheetdb':
+        // SheetDB is a service that provides API access to Google Sheets
+        if (!excelUrl) throw new Error('SheetDB API endpoint is required');
+        
+        const apiEndpoint = excelUrl;
+        const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
+        
+        const sheetDbResponse = await fetch(apiEndpoint, { headers });
+        if (!sheetDbResponse.ok) throw new Error(`Failed to fetch data: ${sheetDbResponse.statusText}`);
+        
+        const sheetData = await sheetDbResponse.json();
+        
+        // Transform to our format
+        data = sheetData.map(row => ({
+          hgvNumber: parseInt(row.HGV_Number || row.hgvNumber || row.id || row.ID || row['HGV Number'] || row.hgv || '0'),
+          status: row.Status || row.status || 'Yard',
+          location: row.Location || row.location || 'N/A',
+          driver: row.Driver || row.driver || 'N/A',
+          lastUpdated: row.LastUpdated || row.lastUpdated || new Date().toISOString()
+        }));
+        break;
+        
+      default:
+        throw new Error('Unknown data source type');
+    }
+    
+    // Validate and clean data
+    data = data.filter(item => !isNaN(item.hgvNumber) && item.hgvNumber > 0);
+    
+    // Ensure status is one of the valid options
+    const validStatuses = ['VOR', 'On Route', 'Yard', 'Running Defect'];
+    data.forEach(item => {
+      if (!validStatuses.includes(item.status)) {
+        item.status = 'Yard'; // Default to Yard for invalid status
+      }
+    });
+    
+    // Update total HGVs if data contains more
+    if (data.length > totalHGVs) {
+      setTotalHGVs(data.length);
+    }
+    
+    // Hide loader and update status
+    setShowLoader(false);
+    setConnectionStatus('Connected');
+    
+    return data;
+  } catch (error) {
+    console.error('Error fetching data:', error);
+    
+    // Hide loader and update status
+    setShowLoader(false);
+    setConnectionStatus(`Error: ${error.message}`);
+    
+    // Show error modal
+    showErrorDialog(`Failed to fetch data: ${error.message}`);
+    
+    return null;
+  }
+};
     
     // Show loader while fetching
     setShowLoader(true);
